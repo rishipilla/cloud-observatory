@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
-  Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Cpu, ExternalLink,
+  Activity, Bell, Check, CircleHelp, Cloud, Cpu, ExternalLink,
   Globe2, Layers3, Network, RefreshCw, Search, Server, Settings2, ShieldCheck, Signal,
   Terminal, Wifi, X
 } from "lucide-react";
@@ -298,7 +298,7 @@ function App() {
           <div className="brand-mark"><Cloud size={21} strokeWidth={1.8} /></div>
           <div><strong>cloud<span>observatory</span></strong><small>INFRASTRUCTURE INTELLIGENCE</small></div>
         </div>
-        <div className="workspace"><span className="workspace-icon"><Layers3 size={15}/></span><div><small>WORKSPACE</small><strong>Personal Cloud</strong></div><ChevronDown size={14}/></div>
+        <div className="workspace"><span className="workspace-icon"><Layers3 size={15}/></span><div><small>WORKSPACE</small><strong>Personal Cloud</strong></div></div>
         <div className="nav-label">MONITORING</div>
         <nav>
           {[
@@ -324,7 +324,7 @@ function App() {
         <div className="sidebar-bottom">
           <div className="connection-card"><span className={`connection-dot ${databaseState.toLowerCase()}`}/><div><strong>Database status</strong><small>{databaseState === "Connected" ? "Ready · persistent storage" : databaseState === "Loading" ? "Checking readiness" : "Disconnected"}</small></div></div>
           <button className="nav-item" onClick={() => navigateTo("Help & settings", "preferences")}><CircleHelp size={17}/><span>Help & settings</span></button>
-          <div className="profile"><div className="avatar">CO</div><div><strong>Cloud Operator</strong><small>Local environment</small></div><ChevronDown size={14}/></div>
+          <div className="profile"><div className="avatar">CO</div><div><strong>Cloud Operator</strong><small>Local environment</small></div></div>
         </div>
       </aside>
 
@@ -396,7 +396,7 @@ function App() {
 
         <section className="content-grid">
           <article className="panel topology-panel" id="topology">
-            <div className="panel-header"><div><div className="panel-kicker">NETWORK VISUALIZATION</div><h2>Global service topology</h2></div><Button className="subtle-select" onClick={() => navigateTo("Service health", "endpoints")}>View endpoints <ChevronDown size={13}/></Button></div>
+            <div className="panel-header"><div><div className="panel-kicker">NETWORK VISUALIZATION</div><h2>Global service topology</h2></div><Button className="subtle-select" onClick={() => navigateTo("Service health", "endpoints")}>View endpoints</Button></div>
             <div className="topology">
               <div className="topology-grid"/>
               <svg className="topology-lines" viewBox="0 0 720 310" preserveAspectRatio="none" aria-hidden="true">
@@ -430,7 +430,7 @@ function App() {
             <div className="chart-footer"><span><i className="legend-green"/>Measured check duration</span><span>Persisted backend results · milliseconds</span></div>
           </article>
           <article className={`panel events-panel ${showEvents ? "" : "events-collapsed"}`} id="events">
-            <div className="panel-header"><div><div className="panel-kicker">OBSERVABILITY LOG</div><h2>Event stream <span className="event-count">{events.length}</span></h2></div><button className="icon-button small" aria-label="Search events" onClick={() => document.getElementById("event-search")?.focus()}><Search size={14}/></button></div>
+            <div className="panel-header"><div><div className="panel-kicker">OBSERVABILITY LOG</div><h2>Event stream <span className="event-count">{events.length}</span></h2></div><Button className="icon-button small" aria-label="Search events" onClick={() => { setShowEvents(true); window.setTimeout(() => document.getElementById("event-search")?.focus(), 0); }}><Search size={14}/></Button></div>
             {showEvents && <><div className="event-search"><Search size={14}/><input id="event-search" placeholder="Filter events..." value={eventSearch} onChange={(event) => setEventSearch(event.target.value)}/><span>API</span></div><div className="event-list">{filteredEvents.length ? filteredEvents.map((event) => <div className="event-row" key={event.id}><div className={`event-indicator ${event.type === "recovery" ? "green" : "amber"}`}>{event.type === "recovery" ? <Check size={12}/> : <CircleHelp size={12}/>}</div><div className="event-copy"><strong>{event.message}</strong><small>{event.type.replace(/_/g, " ")}</small></div><time>{new Date(event.created_at).toLocaleTimeString([], { hour12: false })}</time></div>) : <div className="empty-state">{apiState === "Disconnected" ? "Events unavailable while the API is disconnected." : events.length === 0 ? "No monitoring events yet. Events appear when checks fail or recover." : "No events match this filter."}</div>}</div><div className="events-footer"><span><span className={`connection-dot ${apiState.toLowerCase()}`}/>{apiState === "Connected" ? "Connected to monitoring API" : apiState === "Loading" ? "Connecting…" : "API disconnected"}</span><button onClick={() => setEventSearch("")}>Clear filter</button></div></>}
           </article>
         </section>
@@ -446,7 +446,7 @@ function App() {
             <span>Saved in this browser only. Manual refresh remains available at any time.</span>
           </div>
         </section>
-        <footer className="footer"><span>◈ CLOUD OBSERVATORY <span className="footer-version">v0.1.0 · LOCAL PREVIEW</span></span><span><span className={`connection-dot ${apiState.toLowerCase()}`}/> {apiState === "Connected" ? `${operationalProviders} provider(s) operational` : "Monitoring API unavailable"} <span className="footer-divider"/> Response time uses persisted checks</span></footer>
+        <footer className="footer"><span>◈ CLOUD OBSERVATORY <span className="footer-version">v0.1.0 · LOCAL PREVIEW</span></span><span><span className={`connection-dot ${apiState.toLowerCase()}`}/> {apiState === "Connected" ? `${operationalProviders} provider(s) operational` : "Monitoring API unavailable"} <span className="footer-divider"/> CPU and network telemetry unavailable</span></footer>
       </main>
     </div>
   );

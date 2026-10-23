@@ -14,10 +14,9 @@ export const DEFAULT_PREFERENCES: DashboardPreferences = {
 const STORAGE_KEY = "cloud-observatory.preferences.v1";
 
 function isPreferences(value: unknown): value is DashboardPreferences {
-  if (typeof value !== "object" || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (record.theme === "obsidian" || record.theme === "forest")
-    && (record.refreshInterval === 30 || record.refreshInterval === 60 || record.refreshInterval === 300);
+  return typeof value === "object" && value !== null
+    && "theme" in value && (value.theme === "obsidian" || value.theme === "forest")
+    && "refreshInterval" in value && (value.refreshInterval === 30 || value.refreshInterval === 60 || value.refreshInterval === 300);
 }
 
 export function loadPreferences(storage: Storage = window.localStorage): DashboardPreferences {
