@@ -1,105 +1,132 @@
 # Cloud Observatory
 
-A dark, animated cloud operations dashboard built with React, TypeScript, Vite, and Recharts, backed by a FastAPI monitoring API with persistent SQLAlchemy storage.
+Cloud Observatory is a responsive React, TypeScript, and Vite dashboard for endpoint health and Cloudflare public service status. Its FastAPI backend performs on-demand HTTP checks and persists endpoint configuration, check history, and failure/recovery events using SQLAlchemy and SQLite.
+
+## Features and data integrity
+
+- Live API/database connection state, refresh progress, last successful refresh time, partial/stale data notices, and manual refresh.
+- Endpoint create, edit, delete, immediate check, and history controls. Search, health filters, and name/status/response-time sorting operate on loaded endpoint data.
+- Cloudflare's public Statuspage summary is fetched through the backend, normalized, runtime-validated in the frontend, and shown as unavailable on errors. Public status does not require an API key.
+- AWS and Google Cloud are explicitly unavailable until their monitoring adapters are implemented. The API can report whether credentials are present, but credential presence does not indicate integration health.
+- The response-time scatter chart plots saved backend HTTP check durations only. Its 1h, 6h, and 24h ranges contain persisted measurements; empty ranges show an empty state.
+- CPU, memory, request counts, and network throughput are not measured by this project and remain unavailable.
+- Dashboard appearance and automatic data-refresh interval (30 seconds, 1 minute, or 5 minutes) are saved in browser local storage.
+- Monitored destinations are restricted by the backend to public HTTP/HTTPS destinations. Private/local/reserved IPs, unsafe DNS results, nonstandard ports, credentials in URLs, and unsafe redirects are blocked.
+
+Endpoint checks are **on demand** using “Check now”; saved endpoint intervals are configuration values only and do not schedule background checks yet. The dashboard refresh interval refreshes API data and does not execute endpoint checks.
 
 ## Requirements
 
-- Node.js 18+ and npm
+- Node.js 20+ and npm (the test runner requires Node.js 20+)
 - Python 3.11+
 
-## Configure and run on Windows PowerShell
+## Run on Windows PowerShell
 
-Open two PowerShell terminals in the project directory (`cloud-observatory`).
+Open two PowerShell terminals in the project directory.
 
-### Backend terminal
+### 1. Install and start the backend
 
 ```powershell
-cd backend
+Set-Location -LiteralPath .\backend
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-The API is available at `http://127.0.0.1:8000`; interactive documentation is at `http://127.0.0.1:8000/docs`. The default SQLite database is `backend/cloud_observatory.db`. Its data survives API restarts.
+The API is at `http://127.0.0.1:8000`; API documentation is at `http://127.0.0.1:8000/docs`. SQLite data is written to `backend/cloud_observatory.db` and survives restarts. If PowerShell blocks virtual-environment activation, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` and activate again.
 
-If PowerShell blocks virtual-environment activation, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in that terminal, then activate again.
+### 2. Install and start the frontend
 
-### Frontend terminal
+In the other terminal, from the project root:
 
 ```powershell
+Set-Location -LiteralPath .
 npm install
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 npm run dev
 ```
 
-Open the Vite URL printed in the terminal, usually `http://localhost:5173`. Set `VITE_API_BASE_URL` in the frontend `.env` to the backend URL if it differs from `http://127.0.0.1:8000`. Restart Vite after changing environment variables.
+Open the Vite URL (usually `http://localhost:5173`). The frontend API URL is `VITE_API_BASE_URL` in the root `.env` and defaults to `http://127.0.0.1:8000`. Restart Vite after changing it.
 
-## Backend configuration
+## Configuration and secrets
 
-Copy `backend/.env.example` to `backend/.env` before starting the API. Settings:
+Backend configuration is in `backend/.env`; its documented template is `backend/.env.example`. Available settings include:
 
-- `DATABASE_URL`: SQLAlchemy URL. Defaults to `sqlite:///./cloud_observatory.db`; a PostgreSQL URL can be configured later (install a PostgreSQL DBAPI such as `psycopg` when using it).
-- `CORS_ORIGINS`: comma-separated browser origins allowed to access the API.
-- `CHECK_CONNECT_TIMEOUT_SECONDS` and `CHECK_TOTAL_TIMEOUT_SECONDS`: per-check connection and total request timeouts.
-- `CHECK_MAX_REDIRECTS`: maximum redirects followed by a monitored HTTP check.
+- `DATABASE_URL` (SQLite by default; SQLAlchemy URL can be changed for a future PostgreSQL setup)
+- `CORS_ORIGINS` (comma-separated browser origins)
+- Connection/total monitoring timeouts and redirect limit
+- Optional backend-only credential placeholders for AWS, Google Cloud, Cloudflare account APIs, and a generic provider
 
-The frontend `.env.example` contains only the public API base URL. Never put secrets in a `VITE_*` variable.
+Keep all keys in `backend/.env`. Never put secrets in the frontend `.env` or any `VITE_*` variable. Google Cloud credentials should be supplied as a local service-account file path, not pasted into source files. `GET /api/providers/config` reports configuration presence without revealing secret values. AWS/Google Cloud/Cloudflare account adapters are not implemented by those placeholders.
 
-### Provider API credentials
+## Architecture
 
-Optional credential placeholders are available in `backend/.env.example` and the local `backend/.env` for AWS, Google Cloud, Cloudflare account APIs, and one generic provider. Put credentials only in `backend/.env`:
+```text
+src/
+  App.tsx                 Dashboard layout and interactions
+  api.ts                  Typed frontend API client, timeouts, Cloudflare parsing
+  components/ui.tsx       Reusable Button, Card, Badge, loading, and empty states
+  preferences.ts          Validated browser-persisted preferences
+  styles.css              Dashboard theme and responsive layout
+  *.test.ts(x)            API, component, and dashboard interaction tests
+backend/
+  app/main.py             FastAPI app, CORS, normalized errors
+  app/config.py           Environment-backed settings
+  app/database.py         SQLAlchemy engine and database session
+  app/models.py           Endpoint, check, and monitoring-event tables
+  app/schemas.py          Pydantic request/response schemas
+  app/routes.py           API routes
+  app/services/monitoring.py  SSRF-conscious HTTP checks and DNS validation
+  tests/                  Backend API and monitoring tests
+package.json              Development, test, and production-build scripts
+```
 
-- AWS: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, and `AWS_REGION`. Use a dedicated least-privilege IAM identity.
-- Google Cloud: `GOOGLE_CLOUD_PROJECT_ID` and `GOOGLE_APPLICATION_CREDENTIALS`, the path to a service-account JSON file. Do not paste service-account JSON into an environment variable or chat.
-- Cloudflare account API: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The existing public status integration does not need these credentials.
-- Other APIs: `EXTERNAL_API_KEY` and `EXTERNAL_API_BASE_URL`.
+## API
 
-`GET /api/providers/config` reports whether each credential set is present and never returns key values. These fields are configuration placeholders, not complete AWS/Google Cloud/Cloudflare account adapters; provide the specific service/API and required metrics before those adapters are implemented. Keep `backend/.env` private and never commit it.
+- `GET /api/health`, `GET /api/ready`, `GET /api/overview`
+- `GET /api/endpoints`, `POST /api/endpoints`
+- `PATCH /api/endpoints/{id}`, `DELETE /api/endpoints/{id}`
+- `POST /api/endpoints/{id}/check`, `GET /api/endpoints/{id}/history`
+- `GET /api/providers/cloudflare`, `GET /api/providers/config`
+- `GET /api/events`
 
-## Monitoring and data integrity
-
-- Endpoint checks make real backend HTTP requests and persist status, elapsed time, failures, and timestamps.
-- Local, private, link-local, reserved, nonstandard-port, and credentialed URLs are rejected. DNS results and every redirect destination are validated; connections use validated resolved addresses and do not use environment proxies.
-- Failures and recoveries are stored as monitoring events.
-- Cloudflare public status is fetched and normalized by the backend. Google Cloud and AWS remain visibly unavailable until connected.
-- CPU, memory, throughput, and the illustrative latency chart are not real telemetry. The chart remains explicitly labelled **DEMO DATA**.
+API errors use `{"error":{"code":"...","message":"..."}}`.
 
 ## Tests and production build
+
+Frontend tests, including API parsing/errors and dashboard interactions:
+
+```powershell
+npm test
+```
+
+Frontend TypeScript validation and production bundle:
+
+```powershell
+npm run build
+```
 
 Backend tests:
 
 ```powershell
-cd backend
+Set-Location -LiteralPath .\backend
 .\.venv\Scripts\Activate.ps1
 python -m pytest -q
 ```
 
-Frontend type-check and production build:
+## Screenshots
 
-```powershell
-cd ..
-npm run build
-```
-
-## API endpoints
-
-- `GET /api/health`, `GET /api/ready`, `GET /api/overview`
-- `GET`, `POST /api/endpoints`
-- `PATCH`, `DELETE /api/endpoints/{id}`
-- `POST /api/endpoints/{id}/check`
-- `GET /api/endpoints/{id}/history`
-- `GET /api/providers/cloudflare`
-- `GET /api/events`
-
-Errors use the consistent `{"error":{"code":"...","message":"..."}}` response shape.
+Run the dashboard and backend locally, add an endpoint you are authorized to monitor, and run a check. Capture the browser at desktop and narrow/mobile widths. Save reviewed screenshots under `docs/screenshots/` (for example, `docs/screenshots/dashboard-desktop.png` and `docs/screenshots/dashboard-mobile.png`) and link them here when added. Do not include credentials, private endpoint URLs, or sensitive monitoring results in screenshots.
 
 ## Troubleshooting
 
-- **Dashboard says API disconnected:** ensure Uvicorn is running at the `VITE_API_BASE_URL`; confirm `/api/health` and `/api/ready` return success. Restart Vite after changing `.env`.
-- **Browser reports a CORS error:** add the exact frontend origin, including scheme and port, to `CORS_ORIGINS` in `backend/.env`; restart Uvicorn.
-- **An endpoint cannot be added:** only public HTTP/HTTPS URLs on standard ports are permitted. Localhost and private destinations are blocked to prevent SSRF.
-- **Cloudflare shows unavailable:** verify the backend host has internet access and retry with Refresh data. Provider failure is shown as unavailable rather than healthy.
-- **Database changes do not appear:** check that the backend starts from `backend` and that `DATABASE_URL` points to the intended file/database.
+- **API disconnected:** start Uvicorn and check `http://127.0.0.1:8000/api/health` and `/api/ready`; verify `VITE_API_BASE_URL`, then restart Vite.
+- **CORS error:** add the exact frontend origin (scheme and port) to `CORS_ORIGINS` in `backend/.env`, then restart Uvicorn.
+- **Endpoint rejected:** only standard-port public HTTP/HTTPS destinations are permitted. Private, local, reserved, credentialed, or disallowed redirect targets are rejected intentionally.
+- **Cloudflare unavailable:** check backend outbound internet access and refresh. Provider errors are shown as unavailable; no healthy status is fabricated.
+- **No chart points:** run one or more endpoint checks and select a range that includes their saved timestamps.
+- **Settings reset:** theme and dashboard refresh interval use this browser's local storage. Clearing site data resets the preferences.
+- **Database seems empty:** the SQLite path is relative to the backend working directory. Start Uvicorn from `backend` and check `DATABASE_URL`.
