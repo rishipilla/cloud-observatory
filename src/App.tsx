@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Cpu, ExternalLink,
@@ -56,6 +56,8 @@ function App() {
   const [apiState, setApiState] = useState<ConnectionState>("Loading");
   const [databaseState, setDatabaseState] = useState<ConnectionState>("Loading");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [lastAttempt, setLastAttempt] = useState<Date | null>(null);
+  const [refreshError, setRefreshError] = useState("");
   const [loading, setLoading] = useState(false);
   const [stale, setStale] = useState(false);
   const [activeNav, setActiveNav] = useState("Overview");
@@ -69,44 +71,59 @@ function App() {
   const [historyId, setHistoryId] = useState<number | null>(null);
   const [history, setHistory] = useState<CheckResult[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const refreshingRef = useRef(false);
 
   async function refreshData() {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     setLoading(true);
-    const healthResult = await api.health().then(() => true).catch(() => false);
-    setApiState(healthResult ? "Connected" : "Disconnected");
-    if (!healthResult) {
+    setRefreshError("");
+    try {
+      await api.health();
+      setApiState("Connected");
+      let failed = false;
+      try {
+        await api.ready();
+        setDatabaseState("Connected");
+      } catch {
+        setDatabaseState("Disconnected");
+        failed = true;
+      }
+      const results = await Promise.allSettled([api.overview(), api.endpoints(), api.events(), api.cloudflare()]);
+      const [overviewResult, endpointsResult, eventsResult, cloudflareResult] = results;
+      if (overviewResult.status === "fulfilled") setOverview(overviewResult.value);
+      else failed = true;
+      if (endpointsResult.status === "fulfilled") setEndpoints(endpointsResult.value);
+      else failed = true;
+      if (eventsResult.status === "fulfilled") setEvents(eventsResult.value);
+      else failed = true;
+      if (cloudflareResult.status === "fulfilled") {
+        const data = cloudflareResult.value;
+        setCloudflare(data);
+        setProviders((current) => current.map((provider) => provider.name === "Cloudflare"
+          ? { ...provider, description: data.description, state: stateFromIndicator(data.indicator), updated: data.updated_at || undefined }
+          : provider));
+      } else {
+        failed = true;
+        setProviders((current) => current.map((provider) => provider.name === "Cloudflare"
+          ? provider.state === "Loading"
+            ? { ...provider, state: "Unavailable", description: "Public status API could not be reached" }
+            : provider
+          : provider));
+      }
+      setStale(failed);
+      if (!failed) setLastUpdated(new Date());
+      if (failed) setRefreshError("One or more data sources did not refresh. Previously loaded values are retained where available.");
+    } catch (error) {
+      setApiState("Disconnected");
       setDatabaseState("Disconnected");
       setStale(true);
-      setProviders((current) => current.map((provider) => ({ ...provider, state: provider.name === "Cloudflare" && cloudflare ? provider.state : "Unavailable" })));
+      setRefreshError(error instanceof Error ? error.message : "Could not reach the monitoring API.");
+    } finally {
+      setLastAttempt(new Date());
       setLoading(false);
-      return;
+      refreshingRef.current = false;
     }
-    const readyResult = await api.ready().then(() => true).catch(() => false);
-    setDatabaseState(readyResult ? "Connected" : "Disconnected");
-    const results = await Promise.allSettled([api.overview(), api.endpoints(), api.events(), api.cloudflare()]);
-    const [overviewResult, endpointsResult, eventsResult, cloudflareResult] = results;
-    let failed = !readyResult;
-    if (overviewResult.status === "fulfilled") setOverview(overviewResult.value);
-    else failed = true;
-    if (endpointsResult.status === "fulfilled") setEndpoints(endpointsResult.value);
-    else failed = true;
-    if (eventsResult.status === "fulfilled") setEvents(eventsResult.value);
-    else failed = true;
-    if (cloudflareResult.status === "fulfilled") {
-      const data = cloudflareResult.value;
-      setCloudflare(data);
-      setProviders((current) => current.map((provider) => provider.name === "Cloudflare"
-        ? { ...provider, description: data.description, state: stateFromIndicator(data.indicator), updated: data.updated_at || undefined }
-        : provider));
-    } else {
-      failed = true;
-      setProviders((current) => current.map((provider) => provider.name === "Cloudflare"
-        ? { ...provider, state: "Unavailable", description: "Public status API could not be reached" }
-        : provider));
-    }
-    setStale(failed);
-    setLastUpdated(new Date());
-    setLoading(false);
   }
 
   useEffect(() => {
@@ -238,8 +255,9 @@ function App() {
           <div><strong>{apiState === "Loading" ? "Connecting to monitoring API" : apiState === "Disconnected" ? "Monitoring API disconnected" : stale ? "Showing stale or partial data" : "Live monitoring data"}</strong>
             <span>{apiState === "Disconnected" ? "Start the FastAPI backend and verify VITE_API_BASE_URL. Previously loaded results are retained." : "Endpoint checks, events, and Cloudflare public status are loaded from the backend. CPU, memory, and throughput have no connected source."}</span>
           </div>
-          <span className="banner-tag">{lastUpdated ? `UPDATED ${lastUpdated.toLocaleTimeString([], { hour12: false })}` : apiState.toUpperCase()}</span>
+          <span className="banner-tag">{lastUpdated ? `LAST SUCCESS ${lastUpdated.toLocaleTimeString([], { hour12: false })}` : apiState.toUpperCase()}</span>
         </div>
+        {refreshError && <div className="refresh-error" role="status"><span>{refreshError}</span><span>{lastAttempt ? `Last attempt ${lastAttempt.toLocaleTimeString([], { hour12: false })}` : ""}</span></div>}
 
         <section className="metric-grid">
           <Card className="metric-card"><div className="metric-top"><span>MONITORED ENDPOINTS UP</span><ShieldCheck size={17}/></div><div className="metric-value">{overview ? overview.endpoints_healthy : "—"}<span className="metric-total"> / {overview?.endpoints_total ?? "—"}</span></div><div className="metric-foot"><span className="foot-neutral"><Activity size={13}/>Persisted health checks</span><span className="metric-side">LIVE</span></div><div className="metric-bar"><i style={{ width: `${overview?.endpoints_total ? overview.endpoints_healthy / overview.endpoints_total * 100 : 0}%` }}/></div></Card>

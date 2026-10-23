@@ -46,35 +46,83 @@ export interface CloudflareStatus {
   incidents: { name: string; status: string }[];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readStatusItems(value: unknown, section: "components" | "incidents") {
+  if (!Array.isArray(value)) throw new ApiError(`Cloudflare response has invalid ${section}.`);
+  return value.map((item, index) => {
+    if (!isRecord(item) || typeof item.name !== "string" || typeof item.status !== "string") {
+      throw new ApiError(`Cloudflare response has an invalid ${section} entry at index ${index}.`);
+    }
+    return { name: item.name, status: item.status };
+  });
+}
+
+export function parseCloudflareStatus(value: unknown): CloudflareStatus {
+  if (!isRecord(value) || !isRecord(value.status) || !isRecord(value.page)) {
+    throw new ApiError("Cloudflare response is missing its status summary.");
+  }
+  if (typeof value.status.indicator !== "string" || typeof value.status.description !== "string") {
+    throw new ApiError("Cloudflare response has an invalid status summary.");
+  }
+  const updatedAt = value.page.updated_at;
+  if (updatedAt !== undefined && updatedAt !== null && typeof updatedAt !== "string") {
+    throw new ApiError("Cloudflare response has an invalid update timestamp.");
+  }
+  return {
+    provider: "Cloudflare",
+    indicator: value.status.indicator,
+    description: value.status.description,
+    updated_at: updatedAt ?? null,
+    components: readStatusItems(value.components, "components"),
+    incidents: readStatusItems(value.incidents, "incidents"),
+  };
+}
+
 export class ApiError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(message: string, readonly status?: number, readonly code?: string) {
     super(message);
     this.name = "ApiError";
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs = 10_000): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      headers: new Headers({
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...Object.fromEntries(new Headers(init?.headers).entries()),
+      }),
+      signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
     });
-  } catch {
-    throw new ApiError("Could not connect to the monitoring API.");
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new ApiError("The monitoring API request timed out.", undefined, "timeout");
+    }
+    throw new ApiError("Could not connect to the monitoring API.", undefined, "disconnected");
   }
   if (!response.ok) {
     let message = `API request failed (${response.status})`;
+    let code = "http_error";
     try {
       const body = await response.json();
       message = body?.error?.message || message;
-    } catch {
-      // Keep the HTTP status message when the server response is not JSON.
+      code = body?.error?.code || code;
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
     }
-    throw new ApiError(message, response.status);
+    throw new ApiError(message, response.status, code);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new ApiError("The monitoring API returned an invalid response.", response.status, "invalid_response");
+  }
 }
 
 export const api = {
@@ -87,6 +135,6 @@ export const api = {
   deleteEndpoint: (id: number) => request<void>(`/api/endpoints/${id}`, { method: "DELETE" }),
   checkEndpoint: (id: number) => request<CheckResult>(`/api/endpoints/${id}/check`, { method: "POST" }),
   history: (id: number) => request<CheckResult[]>(`/api/endpoints/${id}/history?limit=20`),
-  cloudflare: () => request<CloudflareStatus>("/api/providers/cloudflare"),
+  cloudflare: async () => parseCloudflareStatus(await request<unknown>("/api/providers/cloudflare", undefined, 12_000)),
   events: () => request<MonitoringEvent[]>("/api/events?limit=50"),
 };
