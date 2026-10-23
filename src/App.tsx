@@ -13,7 +13,9 @@ import { Badge, Button, Card, EmptyState, LoadingState } from "./components/ui";
 
 type ProviderState = "Operational" | "Degraded" | "Unavailable" | "Loading";
 type ConnectionState = "Loading" | "Connected" | "Disconnected";
-type Provider = { name: string; description: string; state: ProviderState; updated?: string };
+type Provider = { name: string; description: string; state: ProviderState; updated?: string; configured?: boolean };
+type EndpointFilter = "all" | "up" | "down" | "unchecked";
+type EndpointSort = "name" | "status" | "latency";
 
 const chartData = Array.from({ length: 24 }, (_, i) => ({
   time: `${String(i).padStart(2, "0")}:00`,
@@ -62,7 +64,10 @@ function App() {
   const [stale, setStale] = useState(false);
   const [activeNav, setActiveNav] = useState("Overview");
   const [showEvents, setShowEvents] = useState(true);
-  const [search, setSearch] = useState("");
+  const [eventSearch, setEventSearch] = useState("");
+  const [endpointSearch, setEndpointSearch] = useState("");
+  const [endpointFilter, setEndpointFilter] = useState<EndpointFilter>("all");
+  const [endpointSort, setEndpointSort] = useState<EndpointSort>("name");
   const [notice, setNotice] = useState("");
   const [endpointName, setEndpointName] = useState("");
   const [endpointUrl, setEndpointUrl] = useState("");
@@ -89,8 +94,8 @@ function App() {
         setDatabaseState("Disconnected");
         failed = true;
       }
-      const results = await Promise.allSettled([api.overview(), api.endpoints(), api.events(), api.cloudflare()]);
-      const [overviewResult, endpointsResult, eventsResult, cloudflareResult] = results;
+      const results = await Promise.allSettled([api.overview(), api.endpoints(), api.events(), api.cloudflare(), api.providerConfiguration()]);
+      const [overviewResult, endpointsResult, eventsResult, cloudflareResult, configurationResult] = results;
       if (overviewResult.status === "fulfilled") setOverview(overviewResult.value);
       else failed = true;
       if (endpointsResult.status === "fulfilled") setEndpoints(endpointsResult.value);
@@ -110,6 +115,23 @@ function App() {
             ? { ...provider, state: "Unavailable", description: "Public status API could not be reached" }
             : provider
           : provider));
+      }
+      if (configurationResult.status === "fulfilled") {
+        const configuredProviders = new Map(configurationResult.value.providers.map((provider) => [provider.id, provider]));
+        setProviders((current) => current.map((provider) => {
+          const id = provider.name === "Google Cloud" ? "google_cloud" : provider.name.toLowerCase();
+          const configuration = configuredProviders.get(id);
+          if (!configuration || provider.name === "Cloudflare") return provider;
+          return {
+            ...provider,
+            configured: configuration.configured,
+            description: configuration.configured
+              ? "Credentials present · monitoring adapter unavailable"
+              : "Not configured · integration unavailable",
+          };
+        }));
+      } else {
+        failed = true;
       }
       setStale(failed);
       if (!failed) setLastUpdated(new Date());
@@ -134,9 +156,25 @@ function App() {
 
   async function createEndpoint(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const name = endpointName.trim();
+    if (!name) {
+      setNotice("Enter an endpoint name.");
+      return;
+    }
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(endpointUrl.trim());
+    } catch {
+      setNotice("Enter a valid HTTP or HTTPS URL.");
+      return;
+    }
+    if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password || (parsedUrl.port && !["80", "443"].includes(parsedUrl.port))) {
+      setNotice("Use a public HTTP or HTTPS URL on a standard port without embedded credentials.");
+      return;
+    }
     setSavingEndpoint(true);
     try {
-      await api.createEndpoint({ name: endpointName, url: endpointUrl });
+      await api.createEndpoint({ name, url: parsedUrl.href });
       setEndpointName("");
       setEndpointUrl("");
       setNotice("Endpoint added. Run a check to record its first result.");
@@ -162,6 +200,8 @@ function App() {
   }
 
   async function removeEndpoint(id: number) {
+    const endpoint = endpoints.find((item) => item.id === id);
+    if (!window.confirm(`Remove ${endpoint?.name ?? "this endpoint"} and its check history?`)) return;
     try {
       await api.deleteEndpoint(id);
       if (historyId === id) {
@@ -192,10 +232,35 @@ function App() {
   }
 
   const filteredEvents = useMemo(
-    () => events.filter((event) => `${event.type} ${event.message}`.toLowerCase().includes(search.toLowerCase())),
-    [events, search],
+    () => events.filter((event) => `${event.type} ${event.message}`.toLowerCase().includes(eventSearch.toLowerCase())),
+    [events, eventSearch],
   );
+  const visibleEndpoints = useMemo(() => endpoints
+    .filter((endpoint) => `${endpoint.name} ${endpoint.url}`.toLowerCase().includes(endpointSearch.toLowerCase()))
+    .filter((endpoint) => {
+      if (endpointFilter === "up") return endpoint.last_check?.success === true;
+      if (endpointFilter === "down") return endpoint.last_check?.success === false;
+      if (endpointFilter === "unchecked") return endpoint.last_check === null;
+      return true;
+    })
+    .sort((a, b) => {
+      if (endpointSort === "status") {
+        const rank = (endpoint: MonitoredEndpoint) => endpoint.last_check === null ? 1 : endpoint.last_check.success ? 0 : 2;
+        return rank(a) - rank(b) || a.name.localeCompare(b.name);
+      }
+      if (endpointSort === "latency") {
+        return (a.last_check?.elapsed_ms ?? Number.POSITIVE_INFINITY) - (b.last_check?.elapsed_ms ?? Number.POSITIVE_INFINITY)
+          || a.name.localeCompare(b.name);
+      }
+      return a.name.localeCompare(b.name);
+    }), [endpoints, endpointSearch, endpointFilter, endpointSort]);
   const operationalProviders = providers.filter((provider) => provider.state === "Operational").length;
+
+  function navigateTo(label: string, targetId: string) {
+    setActiveNav(label);
+    setNotice("");
+    document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   return (
     <div className="app-shell">
@@ -216,14 +281,21 @@ function App() {
             { label: "Infrastructure", icon: Server },
             { label: "Event stream", icon: Terminal },
           ].map(({ label, icon: Icon }) => (
-            <button key={label} className={`nav-item ${activeNav === label ? "active" : ""}`} onClick={() => { setActiveNav(label); if (label !== "Overview") setNotice(`${label} view is queued for the next build stage.`); else setNotice(""); }}>
+            <button key={label} className={`nav-item ${activeNav === label ? "active" : ""}`} onClick={() => navigateTo(label, ({
+              Overview: "overview",
+              "Global topology": "topology",
+              "Service health": "endpoints",
+              Network: "topology",
+              Infrastructure: "telemetry",
+              "Event stream": "events",
+            } as Record<string, string>)[label])}>
               <Icon size={17}/><span>{label}</span>{label === "Event stream" && <span className="nav-count">{events.length}</span>}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
           <div className="connection-card"><span className={`connection-dot ${databaseState.toLowerCase()}`}/><div><strong>Database status</strong><small>{databaseState === "Connected" ? "Ready · persistent storage" : databaseState === "Loading" ? "Checking readiness" : "Disconnected"}</small></div></div>
-          <button className="nav-item" onClick={() => setNotice("Add public HTTP or HTTPS endpoints in the monitoring section below.")}><CircleHelp size={17}/><span>Help & settings</span></button>
+          <button className="nav-item" onClick={() => navigateTo("Help & settings", "preferences")}><CircleHelp size={17}/><span>Help & settings</span></button>
           <div className="profile"><div className="avatar">CO</div><div><strong>Cloud Operator</strong><small>Local environment</small></div><ChevronDown size={14}/></div>
         </div>
       </aside>
@@ -233,12 +305,12 @@ function App() {
           <div className="breadcrumb"><span>Observability</span><span className="slash">/</span><strong>{activeNav}</strong></div>
           <div className="top-actions">
             <div className="live-clock"><span className="pulse-dot"/><Clock/><span className="timezone">LOCAL</span></div>
-            <button className="icon-button" aria-label="Notifications" onClick={() => setNotice(overview?.active_incidents ? `${overview.active_incidents} failing monitored endpoint(s).` : "No active endpoint incidents.")}><Bell size={17}/><i/></button>
+            <button className="icon-button" aria-label="Notifications" onClick={() => { if (overview?.active_incidents) { setEventSearch("failure"); navigateTo("Event stream", "events"); } else { setNotice("No active endpoint incidents."); } }}><Bell size={17}/>{Boolean(overview?.active_incidents) && <i/>}</button>
             <div className="top-avatar">R</div>
           </div>
         </header>
 
-        <section className="page-heading">
+        <section className="page-heading" id="overview">
           <div><div className="eyebrow"><span className="eyebrow-line"/> CLOUD CONTROL PLANE <span className="eyebrow-tag">PREVIEW 0.1</span></div>
             <h1>System <span>overview.</span></h1>
             <p>One view into your cloud. Track service health, observe changes, and investigate anomalies.</p>
@@ -266,10 +338,19 @@ function App() {
           <Card className="metric-card"><div className="metric-top"><span>FAILING ENDPOINTS</span><Bell size={17}/></div><div className="metric-value">{overview ? overview.active_incidents : "—"}</div><div className="metric-foot"><span className="foot-neutral">From latest persisted checks</span><span className="metric-side">LIVE</span></div><div className="incident-track"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></Card>
         </section>
 
-        <section className="endpoint-section panel">
+        <section className="endpoint-section panel" id="endpoints">
           <div className="panel-header"><div><div className="panel-kicker">REAL HTTP MONITORING</div><h2>Monitored endpoints</h2></div><span className="event-count">{endpoints.length}</span></div>
-          {apiState === "Disconnected" ? <EmptyState title="Monitoring API disconnected">Endpoint data cannot be loaded until the backend reconnects.</EmptyState> : endpoints.length === 0 ? loading ? <LoadingState label="Loading configured endpoints…" /> : <EmptyState title="No endpoints configured">Add a public HTTP or HTTPS URL to begin monitoring.</EmptyState> : (
-            <div className="endpoint-list">{endpoints.map((endpoint) => <div className="endpoint-item" key={endpoint.id}>
+          {endpoints.length > 0 && <div className="endpoint-toolbar">
+            <label className="endpoint-search"><Search size={14}/><input aria-label="Search monitored endpoints" placeholder="Search services or URLs" value={endpointSearch} onChange={(event) => setEndpointSearch(event.target.value)}/></label>
+            <label className="endpoint-select-label">Status<select aria-label="Filter endpoints by status" className="endpoint-select" value={endpointFilter} onChange={(event) => setEndpointFilter(event.target.value as EndpointFilter)}>
+              <option value="all">All statuses</option><option value="up">Healthy</option><option value="down">Failing</option><option value="unchecked">Not checked</option>
+            </select></label>
+            <label className="endpoint-select-label">Sort<select aria-label="Sort monitored endpoints" className="endpoint-select" value={endpointSort} onChange={(event) => setEndpointSort(event.target.value as EndpointSort)}>
+              <option value="name">Name</option><option value="status">Status</option><option value="latency">Response time</option>
+            </select></label>
+          </div>}
+          {apiState === "Disconnected" ? <EmptyState title="Monitoring API disconnected">Endpoint data cannot be loaded until the backend reconnects.</EmptyState> : endpoints.length === 0 ? loading ? <LoadingState label="Loading configured endpoints…" /> : <EmptyState title="No endpoints configured">Add a public HTTP or HTTPS URL to begin monitoring.</EmptyState> : visibleEndpoints.length === 0 ? <EmptyState title="No matching endpoints">Adjust the search or status filter to see monitored services.</EmptyState> : (
+            <div className="endpoint-list">{visibleEndpoints.map((endpoint) => <div className="endpoint-item" key={endpoint.id}>
               <div className="endpoint-details"><strong>{endpoint.name}</strong><a href={endpoint.url} target="_blank" rel="noreferrer">{endpoint.url}<ExternalLink size={11}/></a></div>
               <div className="endpoint-result">{endpoint.last_check ? <><StatusPill state={endpoint.last_check.success ? "Operational" : "Degraded"}/><small>{endpoint.last_check.status_code ? `HTTP ${endpoint.last_check.status_code}` : endpoint.last_check.error} · {endpoint.last_check.elapsed_ms == null ? "—" : `${endpoint.last_check.elapsed_ms.toFixed(0)} ms`} · {formatTime(endpoint.last_check.checked_at)}</small></> : <small>No check has run</small>}</div>
               <div className="endpoint-actions"><Button className="text-button" disabled={checkingId === endpoint.id} onClick={() => void runCheck(endpoint.id)}>{checkingId === endpoint.id ? "Checking…" : "Check now"}</Button><Button className="text-button" onClick={() => void toggleHistory(endpoint.id)}>{historyId === endpoint.id ? "Hide history" : "History"}</Button><Button className="text-button danger-button" onClick={() => void removeEndpoint(endpoint.id)}>Remove</Button></div>
@@ -285,8 +366,8 @@ function App() {
         </section>
 
         <section className="content-grid">
-          <article className="panel topology-panel">
-            <div className="panel-header"><div><div className="panel-kicker">NETWORK VISUALIZATION</div><h2>Global service topology</h2></div><button className="subtle-select" onClick={() => setNotice("Topology nodes will become interactive when real infrastructure sources are connected.")}>Global view <ChevronDown size={13}/></button></div>
+          <article className="panel topology-panel" id="topology">
+            <div className="panel-header"><div><div className="panel-kicker">NETWORK VISUALIZATION</div><h2>Global service topology</h2></div><Button className="subtle-select" onClick={() => navigateTo("Service health", "endpoints")}>View endpoints <ChevronDown size={13}/></Button></div>
             <div className="topology">
               <div className="topology-grid"/>
               <svg className="topology-lines" viewBox="0 0 720 310" preserveAspectRatio="none" aria-hidden="true">
@@ -305,7 +386,7 @@ function App() {
           </article>
 
           <article className="panel provider-panel">
-            <div className="panel-header"><div><div className="panel-kicker">UPSTREAM SERVICES</div><h2>Provider health</h2></div><button className="icon-button small" onClick={() => void refreshData()} aria-label="Refresh provider health"><RefreshCw size={14}/></button></div>
+            <div className="panel-header"><div><div className="panel-kicker">UPSTREAM SERVICES</div><h2>Provider health</h2></div><Button className="icon-button small" onClick={() => void refreshData()} aria-label="Refresh provider health"><RefreshCw size={14}/></Button></div>
             <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><div className={`provider-logo ${provider.name.toLowerCase().replace(" ", "-")}`}>{provider.name === "AWS" ? <span className="aws-mark">aws</span> : provider.name === "Google Cloud" ? <span className="google-mark">G</span> : <Cloud size={17}/>}</div><div className="provider-info"><strong>{provider.name}</strong><small>{provider.description}</small></div><StatusPill state={provider.state}/></div>)}</div>
             {cloudflare?.incidents.length ? <div className="provider-extra">Active Cloudflare incidents: {cloudflare.incidents.map((incident) => incident.name).join(", ")}</div> : null}
             <div className="provider-footer"><span>{lastUpdated ? `Checked ${lastUpdated.toLocaleTimeString([], { hour12: false })}` : "Waiting for first check"}</span><a href="https://www.cloudflarestatus.com/" target="_blank" rel="noreferrer">Status source <ExternalLink size={12}/></a></div>
@@ -313,15 +394,15 @@ function App() {
         </section>
 
         <section className="lower-grid">
-          <article className="panel chart-panel">
+          <article className="panel chart-panel" id="telemetry">
             <div className="panel-header"><div><div className="panel-kicker">PERFORMANCE TELEMETRY</div><h2>Request latency</h2></div><span className="demo-badge">DEMO DATA</span></div>
             <div className="chart-summary"><strong>Illustrative series</strong><span><i/>Not connected to a real request source</span></div>
             <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}><defs><linearGradient id="latencyFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#36e99b" stopOpacity={0.22}/><stop offset="95%" stopColor="#36e99b" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#1c2923" strokeDasharray="3 5" vertical={false}/><XAxis dataKey="time" tick={{ fill: "#64746b", fontSize: 10 }} axisLine={false} tickLine={false} interval={5}/><YAxis tick={{ fill: "#64746b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}ms`}/><Tooltip contentStyle={{ background: "#0c1510", border: "1px solid #26392e", borderRadius: 8, color: "#e2f5e9", fontSize: 12 }} labelStyle={{ color: "#8ba696" }} formatter={(value) => [`${value} ms`, "Illustrative latency"]}/><Area type="monotone" dataKey="latency" stroke="#3be99a" strokeWidth={2} fill="url(#latencyFill)" activeDot={{ r: 4, fill: "#3be99a", stroke: "#07100b", strokeWidth: 2 }}/></AreaChart></ResponsiveContainer></div>
             <div className="chart-footer"><span><i className="legend-green"/>Latency (illustrative)</span><span>24-hour shape · synthetic</span></div>
           </article>
-          <article className={`panel events-panel ${showEvents ? "" : "events-collapsed"}`}>
+          <article className={`panel events-panel ${showEvents ? "" : "events-collapsed"}`} id="events">
             <div className="panel-header"><div><div className="panel-kicker">OBSERVABILITY LOG</div><h2>Event stream <span className="event-count">{events.length}</span></h2></div><button className="icon-button small" aria-label="Search events" onClick={() => document.getElementById("event-search")?.focus()}><Search size={14}/></button></div>
-            {showEvents && <><div className="event-search"><Search size={14}/><input id="event-search" placeholder="Filter events..." value={search} onChange={(event) => setSearch(event.target.value)}/><span>API</span></div><div className="event-list">{filteredEvents.length ? filteredEvents.map((event) => <div className="event-row" key={event.id}><div className={`event-indicator ${event.type === "recovery" ? "green" : "amber"}`}>{event.type === "recovery" ? <Check size={12}/> : <CircleHelp size={12}/>}</div><div className="event-copy"><strong>{event.message}</strong><small>{event.type.replace(/_/g, " ")}</small></div><time>{new Date(event.created_at).toLocaleTimeString([], { hour12: false })}</time></div>) : <div className="empty-state">{apiState === "Disconnected" ? "Events unavailable while the API is disconnected." : events.length === 0 ? "No monitoring events yet. Events appear when checks fail or recover." : "No events match this filter."}</div>}</div><div className="events-footer"><span><span className={`connection-dot ${apiState.toLowerCase()}`}/>{apiState === "Connected" ? "Connected to monitoring API" : apiState === "Loading" ? "Connecting…" : "API disconnected"}</span><button onClick={() => setSearch("")}>Clear filter</button></div></>}
+            {showEvents && <><div className="event-search"><Search size={14}/><input id="event-search" placeholder="Filter events..." value={eventSearch} onChange={(event) => setEventSearch(event.target.value)}/><span>API</span></div><div className="event-list">{filteredEvents.length ? filteredEvents.map((event) => <div className="event-row" key={event.id}><div className={`event-indicator ${event.type === "recovery" ? "green" : "amber"}`}>{event.type === "recovery" ? <Check size={12}/> : <CircleHelp size={12}/>}</div><div className="event-copy"><strong>{event.message}</strong><small>{event.type.replace(/_/g, " ")}</small></div><time>{new Date(event.created_at).toLocaleTimeString([], { hour12: false })}</time></div>) : <div className="empty-state">{apiState === "Disconnected" ? "Events unavailable while the API is disconnected." : events.length === 0 ? "No monitoring events yet. Events appear when checks fail or recover." : "No events match this filter."}</div>}</div><div className="events-footer"><span><span className={`connection-dot ${apiState.toLowerCase()}`}/>{apiState === "Connected" ? "Connected to monitoring API" : apiState === "Loading" ? "Connecting…" : "API disconnected"}</span><button onClick={() => setEventSearch("")}>Clear filter</button></div></>}
           </article>
         </section>
         <footer className="footer"><span>◈ CLOUD OBSERVATORY <span className="footer-version">v0.1.0 · LOCAL PREVIEW</span></span><span><span className={`connection-dot ${apiState.toLowerCase()}`}/> {apiState === "Connected" ? `${operationalProviders} provider(s) operational` : "Monitoring API unavailable"} <span className="footer-divider"/> Charts remain labelled demo</span></footer>

@@ -46,6 +46,18 @@ export interface CloudflareStatus {
   incidents: { name: string; status: string }[];
 }
 
+export interface ProviderConfiguration {
+  id: string;
+  name: string;
+  configured: boolean;
+  required_settings: string[];
+  note: string;
+}
+
+export interface ProviderConfigurationResponse {
+  providers: ProviderConfiguration[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -136,5 +148,6 @@ export const api = {
   checkEndpoint: (id: number) => request<CheckResult>(`/api/endpoints/${id}/check`, { method: "POST" }),
   history: (id: number) => request<CheckResult[]>(`/api/endpoints/${id}/history?limit=20`),
   cloudflare: async () => parseCloudflareStatus(await request<unknown>("/api/providers/cloudflare", undefined, 12_000)),
+  providerConfiguration: () => request<ProviderConfigurationResponse>("/api/providers/config"),
   events: () => request<MonitoringEvent[]>("/api/events?limit=50"),
 };

@@ -16,6 +16,7 @@ vi.mock("./api", async (importOriginal) => {
       endpoints: vi.fn(),
       events: vi.fn(),
       cloudflare: vi.fn(),
+      providerConfiguration: vi.fn(),
       createEndpoint: vi.fn(),
       deleteEndpoint: vi.fn(),
       checkEndpoint: vi.fn(),
@@ -56,6 +57,7 @@ beforeEach(() => {
   vi.mocked(api.endpoints).mockResolvedValue([]);
   vi.mocked(api.events).mockResolvedValue([]);
   vi.mocked(api.cloudflare).mockResolvedValue(operationalStatus);
+  vi.mocked(api.providerConfiguration).mockResolvedValue({ providers: [] });
 });
 
 describe("dashboard interactions", () => {
@@ -77,5 +79,24 @@ describe("dashboard interactions", () => {
 
     expect(await screen.findAllByText("Monitoring API disconnected")).toHaveLength(2);
     expect(screen.getByText("Endpoint data cannot be loaded until the backend reconnects.")).toBeInTheDocument();
+  });
+
+  it("filters endpoints by text and health status", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.endpoints).mockResolvedValue([
+      { id: 1, name: "Alpha API", url: "https://alpha.example", interval_seconds: 60, enabled: true, created_at: "2026-10-23T19:00:00Z", updated_at: "2026-10-23T19:00:00Z", last_check: { id: 1, endpoint_id: 1, status_code: 200, elapsed_ms: 10, success: true, error: null, checked_at: "2026-10-23T19:00:00Z" } },
+      { id: 2, name: "Beta API", url: "https://beta.example", interval_seconds: 60, enabled: true, created_at: "2026-10-23T19:00:00Z", updated_at: "2026-10-23T19:00:00Z", last_check: { id: 2, endpoint_id: 2, status_code: 503, elapsed_ms: 20, success: false, error: "HTTP 503", checked_at: "2026-10-23T19:00:00Z" } },
+      { id: 3, name: "Gamma API", url: "https://gamma.example", interval_seconds: 60, enabled: true, created_at: "2026-10-23T19:00:00Z", updated_at: "2026-10-23T19:00:00Z", last_check: null },
+    ]);
+    render(<App />);
+
+    expect(await screen.findByText("Alpha API")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Filter endpoints by status"), "down");
+    expect(screen.getByText("Beta API")).toBeInTheDocument();
+    expect(screen.queryByText("Alpha API")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Filter endpoints by status"), "all");
+    await user.type(screen.getByLabelText("Search monitored endpoints"), "gamma");
+    expect(screen.getByText("Gamma API")).toBeInTheDocument();
+    expect(screen.queryByText("Alpha API")).not.toBeInTheDocument();
   });
 });
