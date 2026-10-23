@@ -9,6 +9,7 @@ import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis
 } from "recharts";
 import { api, type CheckResult, type CloudflareStatus, type MonitoredEndpoint, type MonitoringEvent, type Overview } from "./api";
+import { Badge, Button, Card, EmptyState, LoadingState } from "./components/ui";
 
 type ProviderState = "Operational" | "Degraded" | "Unavailable" | "Loading";
 type ConnectionState = "Loading" | "Connected" | "Disconnected";
@@ -35,7 +36,7 @@ function Clock() {
 }
 
 function StatusPill({ state }: { state: ProviderState }) {
-  return <span className={`status-pill ${state.toLowerCase()}`}><i />{state}</span>;
+  return <Badge className={`status-pill ${state.toLowerCase()}`}><i />{state}</Badge>;
 }
 
 function formatTime(value: string | null | undefined): string {
@@ -226,8 +227,8 @@ function App() {
             <p>One view into your cloud. Track service health, observe changes, and investigate anomalies.</p>
           </div>
           <div className="heading-actions">
-            <button className="button-secondary" onClick={() => setShowEvents(!showEvents)}><Activity size={15}/>{showEvents ? "Hide activity" : "Show activity"}</button>
-            <button className="button-primary" onClick={() => void refreshData()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/>{loading ? "Refreshing" : "Refresh data"}</button>
+            <Button className="button-secondary" onClick={() => setShowEvents(!showEvents)}><Activity size={15}/>{showEvents ? "Hide activity" : "Show activity"}</Button>
+            <Button className="button-primary" onClick={() => void refreshData()} disabled={loading} aria-busy={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/>{loading ? "Refreshing" : "Refresh data"}</Button>
           </div>
         </section>
         {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="Dismiss"><X size={15}/></button></div>}
@@ -241,26 +242,26 @@ function App() {
         </div>
 
         <section className="metric-grid">
-          <article className="metric-card"><div className="metric-top"><span>MONITORED ENDPOINTS UP</span><ShieldCheck size={17}/></div><div className="metric-value">{overview ? overview.endpoints_healthy : "—"}<span className="metric-total"> / {overview?.endpoints_total ?? "—"}</span></div><div className="metric-foot"><span className="foot-neutral"><Activity size={13}/>Persisted health checks</span><span className="metric-side">LIVE</span></div><div className="metric-bar"><i style={{ width: `${overview?.endpoints_total ? overview.endpoints_healthy / overview.endpoints_total * 100 : 0}%` }}/></div></article>
-          <article className="metric-card"><div className="metric-top"><span>HOST CPU UTILIZATION</span><Cpu size={17}/></div><div className="metric-value muted-value">—<span className="metric-unit"> %</span></div><div className="metric-foot"><span className="foot-amber">Agent not connected</span><span className="metric-side">NO DATA</span></div><div className="mini-empty"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></article>
-          <article className="metric-card"><div className="metric-top"><span>NETWORK THROUGHPUT</span><Wifi size={17}/></div><div className="metric-value muted-value">—<span className="metric-unit"> Mbps</span></div><div className="metric-foot"><span className="foot-amber">Exporter required</span><span className="metric-side">NO DATA</span></div><div className="mini-empty"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></article>
-          <article className="metric-card"><div className="metric-top"><span>FAILING ENDPOINTS</span><Bell size={17}/></div><div className="metric-value">{overview ? overview.active_incidents : "—"}</div><div className="metric-foot"><span className="foot-neutral">From latest persisted checks</span><span className="metric-side">LIVE</span></div><div className="incident-track"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></article>
+          <Card className="metric-card"><div className="metric-top"><span>MONITORED ENDPOINTS UP</span><ShieldCheck size={17}/></div><div className="metric-value">{overview ? overview.endpoints_healthy : "—"}<span className="metric-total"> / {overview?.endpoints_total ?? "—"}</span></div><div className="metric-foot"><span className="foot-neutral"><Activity size={13}/>Persisted health checks</span><span className="metric-side">LIVE</span></div><div className="metric-bar"><i style={{ width: `${overview?.endpoints_total ? overview.endpoints_healthy / overview.endpoints_total * 100 : 0}%` }}/></div></Card>
+          <Card className="metric-card"><div className="metric-top"><span>HOST CPU UTILIZATION</span><Cpu size={17}/></div><div className="metric-value muted-value">—<span className="metric-unit"> %</span></div><div className="metric-foot"><span className="foot-amber">Agent not connected</span><span className="metric-side">NO DATA</span></div><div className="mini-empty"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></Card>
+          <Card className="metric-card"><div className="metric-top"><span>NETWORK THROUGHPUT</span><Wifi size={17}/></div><div className="metric-value muted-value">—<span className="metric-unit"> Mbps</span></div><div className="metric-foot"><span className="foot-amber">Exporter required</span><span className="metric-side">NO DATA</span></div><div className="mini-empty"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></Card>
+          <Card className="metric-card"><div className="metric-top"><span>FAILING ENDPOINTS</span><Bell size={17}/></div><div className="metric-value">{overview ? overview.active_incidents : "—"}</div><div className="metric-foot"><span className="foot-neutral">From latest persisted checks</span><span className="metric-side">LIVE</span></div><div className="incident-track"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></Card>
         </section>
 
         <section className="endpoint-section panel">
           <div className="panel-header"><div><div className="panel-kicker">REAL HTTP MONITORING</div><h2>Monitored endpoints</h2></div><span className="event-count">{endpoints.length}</span></div>
-          {apiState === "Disconnected" ? <div className="empty-state">The API is disconnected. Endpoint data cannot be loaded.</div> : endpoints.length === 0 ? <div className="empty-state">{loading ? "Loading configured endpoints…" : "No endpoints configured yet. Add a public HTTP or HTTPS URL to begin monitoring."}</div> : (
+          {apiState === "Disconnected" ? <EmptyState title="Monitoring API disconnected">Endpoint data cannot be loaded until the backend reconnects.</EmptyState> : endpoints.length === 0 ? loading ? <LoadingState label="Loading configured endpoints…" /> : <EmptyState title="No endpoints configured">Add a public HTTP or HTTPS URL to begin monitoring.</EmptyState> : (
             <div className="endpoint-list">{endpoints.map((endpoint) => <div className="endpoint-item" key={endpoint.id}>
               <div className="endpoint-details"><strong>{endpoint.name}</strong><a href={endpoint.url} target="_blank" rel="noreferrer">{endpoint.url}<ExternalLink size={11}/></a></div>
               <div className="endpoint-result">{endpoint.last_check ? <><StatusPill state={endpoint.last_check.success ? "Operational" : "Degraded"}/><small>{endpoint.last_check.status_code ? `HTTP ${endpoint.last_check.status_code}` : endpoint.last_check.error} · {endpoint.last_check.elapsed_ms == null ? "—" : `${endpoint.last_check.elapsed_ms.toFixed(0)} ms`} · {formatTime(endpoint.last_check.checked_at)}</small></> : <small>No check has run</small>}</div>
-              <div className="endpoint-actions"><button className="text-button" disabled={checkingId === endpoint.id} onClick={() => void runCheck(endpoint.id)}>{checkingId === endpoint.id ? "Checking…" : "Check now"}</button><button className="text-button" onClick={() => void toggleHistory(endpoint.id)}>{historyId === endpoint.id ? "Hide history" : "History"}</button><button className="text-button danger-button" onClick={() => void removeEndpoint(endpoint.id)}>Remove</button></div>
-              {historyId === endpoint.id && <div className="history-list">{historyLoading ? "Loading history…" : history.length ? history.map((check) => <div key={check.id}><span>{check.success ? "UP" : "DOWN"}</span><span>{check.status_code || check.error}</span><span>{check.elapsed_ms == null ? "—" : `${check.elapsed_ms.toFixed(0)} ms`}</span><time>{formatTime(check.checked_at)}</time></div>) : "No historical checks."}</div>}
+              <div className="endpoint-actions"><Button className="text-button" disabled={checkingId === endpoint.id} onClick={() => void runCheck(endpoint.id)}>{checkingId === endpoint.id ? "Checking…" : "Check now"}</Button><Button className="text-button" onClick={() => void toggleHistory(endpoint.id)}>{historyId === endpoint.id ? "Hide history" : "History"}</Button><Button className="text-button danger-button" onClick={() => void removeEndpoint(endpoint.id)}>Remove</Button></div>
+              {historyId === endpoint.id && <div className="history-list">{historyLoading ? <LoadingState label="Loading history…" /> : history.length ? history.map((check) => <div key={check.id}><span>{check.success ? "UP" : "DOWN"}</span><span>{check.status_code || check.error}</span><span>{check.elapsed_ms == null ? "—" : `${check.elapsed_ms.toFixed(0)} ms`}</span><time>{formatTime(check.checked_at)}</time></div>) : <EmptyState title="No check history yet">Run a check to collect the first result.</EmptyState>}</div>}
             </div>)}</div>
           )}
           <form className="endpoint-form" onSubmit={(event) => void createEndpoint(event)}>
             <input aria-label="Endpoint name" placeholder="Endpoint name" value={endpointName} onChange={(event) => setEndpointName(event.target.value)} required maxLength={120}/>
             <input aria-label="Public HTTP or HTTPS URL" placeholder="https://example.com/health" type="url" value={endpointUrl} onChange={(event) => setEndpointUrl(event.target.value)} required/>
-            <button className="button-primary" type="submit" disabled={savingEndpoint || apiState !== "Connected"}>{savingEndpoint ? "Adding…" : "Add endpoint"}</button>
+            <Button className="button-primary" type="submit" disabled={savingEndpoint || apiState !== "Connected"}>{savingEndpoint ? "Adding…" : "Add endpoint"}</Button>
           </form>
           <div className="endpoint-note">Only public destinations on standard HTTP/HTTPS ports are allowed. Local, private, link-local, and reserved addresses and redirects are blocked.</div>
         </section>
