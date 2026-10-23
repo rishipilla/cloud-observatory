@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import { api, type CloudflareStatus } from "./api";
+import { createMemoryStorage } from "./testStorage";
 
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
@@ -46,6 +47,7 @@ const operationalStatus: CloudflareStatus = {
 };
 
 beforeEach(() => {
+  Object.defineProperty(window, "localStorage", { configurable: true, value: createMemoryStorage() });
   vi.mocked(api.health).mockResolvedValue({ status: "ok" });
   vi.mocked(api.ready).mockResolvedValue({ status: "ready" });
   vi.mocked(api.overview).mockResolvedValue({
@@ -116,5 +118,32 @@ describe("dashboard interactions", () => {
     expect(screen.queryByText("DEMO DATA")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "1h" }));
     expect(screen.getByRole("button", { name: "1h" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("persists theme and refresh interval preferences", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.selectOptions(await screen.findByLabelText("Theme"), "forest");
+    await user.selectOptions(screen.getByLabelText("Refresh interval"), "300");
+
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem("cloud-observatory.preferences.v1") ?? "{}")).toEqual({
+      theme: "forest",
+      refreshInterval: 300,
+    }));
+    expect(document.documentElement).toHaveAttribute("data-theme", "forest");
+  });
+
+  it("rejects unsupported endpoint URLs and submits valid endpoint details", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("No endpoints configured");
+    await user.type(screen.getByLabelText("Endpoint name"), "Sample service");
+    await user.type(screen.getByLabelText("Public HTTP or HTTPS URL"), "https://service.example:8443/health");
+    await user.click(screen.getByRole("button", { name: "Add endpoint" }));
+
+    expect(await screen.findByText("Use a public HTTP or HTTPS URL on a standard port without embedded credentials.")).toBeInTheDocument();
+    expect(api.createEndpoint).not.toHaveBeenCalled();
   });
 });

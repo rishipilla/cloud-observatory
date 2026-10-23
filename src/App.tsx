@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Cpu, ExternalLink,
-  Globe2, Layers3, Network, RefreshCw, Search, Server, ShieldCheck, Signal,
+  Globe2, Layers3, Network, RefreshCw, Search, Server, Settings2, ShieldCheck, Signal,
   Terminal, Wifi, X
 } from "lucide-react";
 import {
@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { api, type CheckResult, type CloudflareStatus, type MonitoredEndpoint, type MonitoringEvent, type Overview } from "./api";
 import { Badge, Button, Card, EmptyState, LoadingState } from "./components/ui";
+import { loadPreferences, savePreferences, type RefreshInterval, type ThemePreference } from "./preferences";
 
 type ProviderState = "Operational" | "Degraded" | "Unavailable" | "Loading";
 type ConnectionState = "Loading" | "Connected" | "Disconnected";
@@ -41,6 +42,8 @@ function formatTime(value: string | null | undefined): string {
 }
 
 function App() {
+  const [preferences, setPreferences] = useState(() => loadPreferences());
+  const { theme, refreshInterval } = preferences;
   const [providers, setProviders] = useState<Provider[]>([
     { name: "Cloudflare", description: "Global network · DNS · CDN", state: "Loading" },
     { name: "Google Cloud", description: "Integration not connected", state: "Unavailable" },
@@ -155,9 +158,16 @@ function App() {
 
   useEffect(() => {
     void refreshData();
-    const timer = window.setInterval(() => void refreshData(), 60_000);
+    const timer = window.setInterval(() => void refreshData(), refreshInterval * 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refreshInterval]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    if (!savePreferences(preferences)) {
+      setNotice("Browser storage is unavailable; dashboard preferences could not be saved.");
+    }
+  }, [preferences, theme]);
 
   async function createEndpoint(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -281,7 +291,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme}>
       <div className="ambient ambient-one" /><div className="ambient ambient-two" />
       <aside className="sidebar">
         <div className="brand">
@@ -324,6 +334,7 @@ function App() {
           <div className="top-actions">
             <div className="live-clock"><span className="pulse-dot"/><Clock/><span className="timezone">LOCAL</span></div>
             <button className="icon-button" aria-label="Notifications" onClick={() => { if (overview?.active_incidents) { setEventSearch("failure"); navigateTo("Event stream", "events"); } else { setNotice("No active endpoint incidents."); } }}><Bell size={17}/>{Boolean(overview?.active_incidents) && <i/>}</button>
+            <button className="icon-button" aria-label="Dashboard preferences" onClick={() => navigateTo("Help & settings", "preferences")}><Settings2 size={17}/></button>
             <div className="top-avatar">R</div>
           </div>
         </header>
@@ -423,7 +434,19 @@ function App() {
             {showEvents && <><div className="event-search"><Search size={14}/><input id="event-search" placeholder="Filter events..." value={eventSearch} onChange={(event) => setEventSearch(event.target.value)}/><span>API</span></div><div className="event-list">{filteredEvents.length ? filteredEvents.map((event) => <div className="event-row" key={event.id}><div className={`event-indicator ${event.type === "recovery" ? "green" : "amber"}`}>{event.type === "recovery" ? <Check size={12}/> : <CircleHelp size={12}/>}</div><div className="event-copy"><strong>{event.message}</strong><small>{event.type.replace(/_/g, " ")}</small></div><time>{new Date(event.created_at).toLocaleTimeString([], { hour12: false })}</time></div>) : <div className="empty-state">{apiState === "Disconnected" ? "Events unavailable while the API is disconnected." : events.length === 0 ? "No monitoring events yet. Events appear when checks fail or recover." : "No events match this filter."}</div>}</div><div className="events-footer"><span><span className={`connection-dot ${apiState.toLowerCase()}`}/>{apiState === "Connected" ? "Connected to monitoring API" : apiState === "Loading" ? "Connecting…" : "API disconnected"}</span><button onClick={() => setEventSearch("")}>Clear filter</button></div></>}
           </article>
         </section>
-        <footer className="footer"><span>◈ CLOUD OBSERVATORY <span className="footer-version">v0.1.0 · LOCAL PREVIEW</span></span><span><span className={`connection-dot ${apiState.toLowerCase()}`}/> {apiState === "Connected" ? `${operationalProviders} provider(s) operational` : "Monitoring API unavailable"} <span className="footer-divider"/> Charts remain labelled demo</span></footer>
+        <section className="panel preferences-panel" id="preferences">
+          <div className="panel-header"><div><div className="panel-kicker">DASHBOARD</div><h2>Preferences</h2></div></div>
+          <div className="preferences-controls">
+            <label>Appearance<select aria-label="Theme" className="endpoint-select" value={theme} onChange={(event) => setPreferences((current) => ({ ...current, theme: event.target.value as ThemePreference }))}>
+              <option value="obsidian">Obsidian</option><option value="forest">Forest</option>
+            </select></label>
+            <label>Automatic refresh<select aria-label="Refresh interval" className="endpoint-select" value={refreshInterval} onChange={(event) => setPreferences((current) => ({ ...current, refreshInterval: Number(event.target.value) as RefreshInterval }))}>
+              <option value={30}>Every 30 seconds</option><option value={60}>Every minute</option><option value={300}>Every 5 minutes</option>
+            </select></label>
+            <span>Saved in this browser only. Manual refresh remains available at any time.</span>
+          </div>
+        </section>
+        <footer className="footer"><span>◈ CLOUD OBSERVATORY <span className="footer-version">v0.1.0 · LOCAL PREVIEW</span></span><span><span className={`connection-dot ${apiState.toLowerCase()}`}/> {apiState === "Connected" ? `${operationalProviders} provider(s) operational` : "Monitoring API unavailable"} <span className="footer-divider"/> Response time uses persisted checks</span></footer>
       </main>
     </div>
   );
