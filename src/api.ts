@@ -73,20 +73,20 @@ function readStatusItems(value: unknown, section: "components" | "incidents") {
 }
 
 export function parseCloudflareStatus(value: unknown): CloudflareStatus {
-  if (!isRecord(value) || !isRecord(value.status) || !isRecord(value.page)) {
+  if (!isRecord(value) || value.provider !== "Cloudflare") {
     throw new ApiError("Cloudflare response is missing its status summary.");
   }
-  if (typeof value.status.indicator !== "string" || typeof value.status.description !== "string") {
+  if (typeof value.indicator !== "string" || typeof value.description !== "string") {
     throw new ApiError("Cloudflare response has an invalid status summary.");
   }
-  const updatedAt = value.page.updated_at;
+  const updatedAt = value.updated_at;
   if (updatedAt !== undefined && updatedAt !== null && typeof updatedAt !== "string") {
     throw new ApiError("Cloudflare response has an invalid update timestamp.");
   }
   return {
-    provider: "Cloudflare",
-    indicator: value.status.indicator,
-    description: value.status.description,
+    provider: value.provider,
+    indicator: value.indicator,
+    description: value.description,
     updated_at: updatedAt ?? null,
     components: readStatusItems(value.components, "components"),
     incidents: readStatusItems(value.incidents, "incidents"),

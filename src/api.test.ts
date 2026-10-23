@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, parseCloudflareStatus } from "./api";
 
 const cloudflarePayload = {
-  status: { indicator: "minor", description: "Minor service disruption" },
-  page: { updated_at: "2026-10-23T19:00:00Z" },
+  provider: "Cloudflare",
+  indicator: "minor",
+  description: "Minor service disruption",
+  updated_at: "2026-10-23T19:00:00Z",
   components: [{ name: "DNS", status: "operational" }],
   incidents: [{ name: "Resolver issue", status: "investigating" }],
 };
@@ -12,7 +14,7 @@ const cloudflarePayload = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Cloudflare status parsing", () => {
-  it("normalizes the provider status payload", () => {
+  it("parses the normalized backend status payload", () => {
     expect(parseCloudflareStatus(cloudflarePayload)).toEqual({
       provider: "Cloudflare",
       indicator: "minor",
@@ -20,6 +22,19 @@ describe("Cloudflare status parsing", () => {
       updated_at: "2026-10-23T19:00:00Z",
       components: [{ name: "DNS", status: "operational" }],
       incidents: [{ name: "Resolver issue", status: "investigating" }],
+    });
+  });
+
+  it("loads the normalized response from the backend provider route", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      JSON.stringify(cloudflarePayload),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )));
+
+    await expect(api.cloudflare()).resolves.toMatchObject({
+      provider: "Cloudflare",
+      indicator: "minor",
+      description: "Minor service disruption",
     });
   });
 
