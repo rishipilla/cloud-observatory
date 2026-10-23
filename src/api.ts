@@ -144,6 +144,8 @@ export const api = {
   endpoints: () => request<MonitoredEndpoint[]>("/api/endpoints"),
   createEndpoint: (input: { name: string; url: string }) =>
     request<MonitoredEndpoint>("/api/endpoints", { method: "POST", body: JSON.stringify(input) }),
+  updateEndpoint: (id: number, input: { name: string; url: string }) =>
+    request<MonitoredEndpoint>(`/api/endpoints/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteEndpoint: (id: number) => request<void>(`/api/endpoints/${id}`, { method: "DELETE" }),
   checkEndpoint: (id: number) => request<CheckResult>(`/api/endpoints/${id}/check`, { method: "POST" }),
   history: (id: number, limit = 20) => request<CheckResult[]>(`/api/endpoints/${id}/history?limit=${limit}`),

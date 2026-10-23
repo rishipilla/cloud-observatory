@@ -20,6 +20,7 @@ vi.mock("./api", async (importOriginal) => {
       providerConfiguration: vi.fn(),
       history: vi.fn(),
       createEndpoint: vi.fn(),
+      updateEndpoint: vi.fn(),
       deleteEndpoint: vi.fn(),
       checkEndpoint: vi.fn(),
     },
@@ -59,6 +60,16 @@ beforeEach(() => {
   });
   vi.mocked(api.endpoints).mockResolvedValue([]);
   vi.mocked(api.history).mockResolvedValue([]);
+  vi.mocked(api.createEndpoint).mockImplementation(async (input) => ({
+    id: 10,
+    name: input.name,
+    url: input.url,
+    interval_seconds: 60,
+    enabled: true,
+    created_at: "2026-10-23T19:00:00Z",
+    updated_at: "2026-10-23T19:00:00Z",
+    last_check: null,
+  }));
   vi.mocked(api.events).mockResolvedValue([]);
   vi.mocked(api.cloudflare).mockResolvedValue(operationalStatus);
   vi.mocked(api.providerConfiguration).mockResolvedValue({ providers: [] });
@@ -145,5 +156,39 @@ describe("dashboard interactions", () => {
 
     expect(await screen.findByText("Use a public HTTP or HTTPS URL on a standard port without embedded credentials.")).toBeInTheDocument();
     expect(api.createEndpoint).not.toHaveBeenCalled();
+    await user.clear(screen.getByLabelText("Public HTTP or HTTPS URL"));
+    await user.type(screen.getByLabelText("Public HTTP or HTTPS URL"), "https://service.example/health");
+    await user.click(screen.getByRole("button", { name: "Add endpoint" }));
+    await waitFor(() => expect(api.createEndpoint).toHaveBeenCalledWith({
+      name: "Sample service",
+      url: "https://service.example/health",
+    }));
+  });
+
+  it("creates and edits monitored endpoint details", async () => {
+    const user = userEvent.setup();
+    const existing = {
+      id: 11,
+      name: "Original service",
+      url: "https://original.example/health",
+      interval_seconds: 60,
+      enabled: true,
+      created_at: "2026-10-23T19:00:00Z",
+      updated_at: "2026-10-23T19:00:00Z",
+      last_check: null,
+    };
+    vi.mocked(api.endpoints).mockResolvedValue([existing]);
+    vi.mocked(api.updateEndpoint).mockResolvedValue({ ...existing, name: "Updated service" });
+    render(<App />);
+
+    expect(await screen.findByText("Original service")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.clear(screen.getByLabelText("Endpoint name"));
+    await user.type(screen.getByLabelText("Endpoint name"), "Updated service");
+    await user.click(screen.getByRole("button", { name: "Save endpoint" }));
+    expect(api.updateEndpoint).toHaveBeenCalledWith(11, {
+      name: "Updated service",
+      url: "https://original.example/health",
+    });
   });
 });

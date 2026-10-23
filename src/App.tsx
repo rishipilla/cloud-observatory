@@ -70,6 +70,7 @@ function App() {
   const [notice, setNotice] = useState("");
   const [endpointName, setEndpointName] = useState("");
   const [endpointUrl, setEndpointUrl] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [savingEndpoint, setSavingEndpoint] = useState(false);
   const [checkingId, setCheckingId] = useState<number | null>(null);
   const [historyId, setHistoryId] = useState<number | null>(null);
@@ -189,10 +190,16 @@ function App() {
     }
     setSavingEndpoint(true);
     try {
-      await api.createEndpoint({ name, url: parsedUrl.href });
+      if (editingId === null) {
+        await api.createEndpoint({ name, url: parsedUrl.href });
+        setNotice("Endpoint added. Run a check to record its first result.");
+      } else {
+        await api.updateEndpoint(editingId, { name, url: parsedUrl.href });
+        setNotice("Endpoint updated.");
+      }
       setEndpointName("");
       setEndpointUrl("");
-      setNotice("Endpoint added. Run a check to record its first result.");
+      setEditingId(null);
       await refreshData();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not add endpoint.");
@@ -222,6 +229,11 @@ function App() {
       if (historyId === id) {
         setHistoryId(null);
         setHistory([]);
+      }
+      if (editingId === id) {
+        setEditingId(null);
+        setEndpointName("");
+        setEndpointUrl("");
       }
       await refreshData();
     } catch (error) {
@@ -284,10 +296,30 @@ function App() {
   const chartCheckCount = chartSeries.reduce((total, series) => total + series.checks.length, 0);
   const operationalProviders = providers.filter((provider) => provider.state === "Operational").length;
 
+  function scrollTo(target: Element | null) {
+    if (target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function editEndpoint(endpoint: MonitoredEndpoint) {
+    setEditingId(endpoint.id);
+    setEndpointName(endpoint.name);
+    setEndpointUrl(endpoint.url);
+    document.getElementById("endpoint-name")?.focus();
+    scrollTo(document.querySelector(".endpoint-form"));
+  }
+
+  function cancelEndpointEdit() {
+    setEditingId(null);
+    setEndpointName("");
+    setEndpointUrl("");
+  }
+
   function navigateTo(label: string, targetId: string) {
     setActiveNav(label);
     setNotice("");
-    document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollTo(document.getElementById(targetId));
   }
 
   return (
@@ -382,14 +414,15 @@ function App() {
             <div className="endpoint-list">{visibleEndpoints.map((endpoint) => <div className="endpoint-item" key={endpoint.id}>
               <div className="endpoint-details"><strong>{endpoint.name}</strong><a href={endpoint.url} target="_blank" rel="noreferrer">{endpoint.url}<ExternalLink size={11}/></a></div>
               <div className="endpoint-result">{endpoint.last_check ? <><StatusPill state={endpoint.last_check.success ? "Operational" : "Degraded"}/><small>{endpoint.last_check.status_code ? `HTTP ${endpoint.last_check.status_code}` : endpoint.last_check.error} · {endpoint.last_check.elapsed_ms == null ? "—" : `${endpoint.last_check.elapsed_ms.toFixed(0)} ms`} · {formatTime(endpoint.last_check.checked_at)}</small></> : <small>No check has run</small>}</div>
-              <div className="endpoint-actions"><Button className="text-button" disabled={checkingId === endpoint.id} onClick={() => void runCheck(endpoint.id)}>{checkingId === endpoint.id ? "Checking…" : "Check now"}</Button><Button className="text-button" onClick={() => void toggleHistory(endpoint.id)}>{historyId === endpoint.id ? "Hide history" : "History"}</Button><Button className="text-button danger-button" onClick={() => void removeEndpoint(endpoint.id)}>Remove</Button></div>
+              <div className="endpoint-actions"><Button className="text-button" disabled={checkingId === endpoint.id} onClick={() => void runCheck(endpoint.id)}>{checkingId === endpoint.id ? "Checking…" : "Check now"}</Button><Button className="text-button" onClick={() => void toggleHistory(endpoint.id)}>{historyId === endpoint.id ? "Hide history" : "History"}</Button><Button className="text-button" onClick={() => editEndpoint(endpoint)}>Edit</Button><Button className="text-button danger-button" onClick={() => void removeEndpoint(endpoint.id)}>Remove</Button></div>
               {historyId === endpoint.id && <div className="history-list">{historyLoading ? <LoadingState label="Loading history…" /> : history.length ? history.map((check) => <div key={check.id}><span>{check.success ? "UP" : "DOWN"}</span><span>{check.status_code || check.error}</span><span>{check.elapsed_ms == null ? "—" : `${check.elapsed_ms.toFixed(0)} ms`}</span><time>{formatTime(check.checked_at)}</time></div>) : <EmptyState title="No check history yet">Run a check to collect the first result.</EmptyState>}</div>}
             </div>)}</div>
           )}
           <form className="endpoint-form" onSubmit={(event) => void createEndpoint(event)}>
-            <input aria-label="Endpoint name" placeholder="Endpoint name" value={endpointName} onChange={(event) => setEndpointName(event.target.value)} required maxLength={120}/>
+            <input id="endpoint-name" aria-label="Endpoint name" placeholder="Endpoint name" value={endpointName} onChange={(event) => setEndpointName(event.target.value)} required maxLength={120}/>
             <input aria-label="Public HTTP or HTTPS URL" placeholder="https://example.com/health" type="url" value={endpointUrl} onChange={(event) => setEndpointUrl(event.target.value)} required/>
-            <Button className="button-primary" type="submit" disabled={savingEndpoint || apiState !== "Connected"}>{savingEndpoint ? "Adding…" : "Add endpoint"}</Button>
+            <Button className="button-primary" type="submit" disabled={savingEndpoint || apiState !== "Connected"}>{savingEndpoint ? editingId === null ? "Adding…" : "Saving…" : editingId === null ? "Add endpoint" : "Save endpoint"}</Button>
+            {editingId !== null && <Button className="button-secondary" type="button" onClick={cancelEndpointEdit}>Cancel edit</Button>}
           </form>
           <div className="endpoint-note">Only public destinations on standard HTTP/HTTPS ports are allowed. Local, private, link-local, and reserved addresses and redirects are blocked.</div>
         </section>
