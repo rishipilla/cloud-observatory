@@ -1,0 +1,39 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Build output
+dist/
+build/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# OS files
+.DS_Storenode_modules/
+dist/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+!.env.*.example
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+*.sqlite3
