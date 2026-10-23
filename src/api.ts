@@ -146,7 +146,7 @@ export const api = {
     request<MonitoredEndpoint>("/api/endpoints", { method: "POST", body: JSON.stringify(input) }),
   deleteEndpoint: (id: number) => request<void>(`/api/endpoints/${id}`, { method: "DELETE" }),
   checkEndpoint: (id: number) => request<CheckResult>(`/api/endpoints/${id}/check`, { method: "POST" }),
-  history: (id: number) => request<CheckResult[]>(`/api/endpoints/${id}/history?limit=20`),
+  history: (id: number, limit = 20) => request<CheckResult[]>(`/api/endpoints/${id}/history?limit=${limit}`),
   cloudflare: async () => parseCloudflareStatus(await request<unknown>("/api/providers/cloudflare", undefined, 12_000)),
   providerConfiguration: () => request<ProviderConfigurationResponse>("/api/providers/config"),
   events: () => request<MonitoringEvent[]>("/api/events?limit=50"),

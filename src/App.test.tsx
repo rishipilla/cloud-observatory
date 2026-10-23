@@ -17,19 +17,20 @@ vi.mock("./api", async (importOriginal) => {
       events: vi.fn(),
       cloudflare: vi.fn(),
       providerConfiguration: vi.fn(),
+      history: vi.fn(),
       createEndpoint: vi.fn(),
       deleteEndpoint: vi.fn(),
       checkEndpoint: vi.fn(),
-      history: vi.fn(),
     },
   };
 });
 
 vi.mock("recharts", () => ({
-  Area: () => null,
-  AreaChart: () => <div />,
   CartesianGrid: () => null,
   ResponsiveContainer: () => <div />,
+  Scatter: () => null,
+  ScatterChart: () => <div />,
+  Legend: () => null,
   Tooltip: () => null,
   XAxis: () => null,
   YAxis: () => null,
@@ -55,6 +56,7 @@ beforeEach(() => {
     last_checked_at: null,
   });
   vi.mocked(api.endpoints).mockResolvedValue([]);
+  vi.mocked(api.history).mockResolvedValue([]);
   vi.mocked(api.events).mockResolvedValue([]);
   vi.mocked(api.cloudflare).mockResolvedValue(operationalStatus);
   vi.mocked(api.providerConfiguration).mockResolvedValue({ providers: [] });
@@ -98,5 +100,21 @@ describe("dashboard interactions", () => {
     await user.type(screen.getByLabelText("Search monitored endpoints"), "gamma");
     expect(screen.getByText("Gamma API")).toBeInTheDocument();
     expect(screen.queryByText("Alpha API")).not.toBeInTheDocument();
+  });
+
+  it("shows only recorded response-time samples and changes the time range", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.endpoints).mockResolvedValue([
+      { id: 11, name: "Measured API", url: "https://measured.example", interval_seconds: 60, enabled: true, created_at: "2026-10-23T19:00:00Z", updated_at: "2026-10-23T19:00:00Z", last_check: null },
+    ]);
+    vi.mocked(api.history).mockResolvedValue([
+      { id: 1, endpoint_id: 11, status_code: 200, elapsed_ms: 34.5, success: true, error: null, checked_at: new Date().toISOString() },
+    ]);
+    render(<App />);
+
+    expect(await screen.findByText("1 persisted sample · 1 endpoint")).toBeInTheDocument();
+    expect(screen.queryByText("DEMO DATA")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "1h" }));
+    expect(screen.getByRole("button", { name: "1h" })).toHaveAttribute("aria-pressed", "true");
   });
 });

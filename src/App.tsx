@@ -6,7 +6,7 @@ import {
   Terminal, Wifi, X
 } from "lucide-react";
 import {
-  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis
+  CartesianGrid, Legend, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis
 } from "recharts";
 import { api, type CheckResult, type CloudflareStatus, type MonitoredEndpoint, type MonitoringEvent, type Overview } from "./api";
 import { Badge, Button, Card, EmptyState, LoadingState } from "./components/ui";
@@ -16,11 +16,6 @@ type ConnectionState = "Loading" | "Connected" | "Disconnected";
 type Provider = { name: string; description: string; state: ProviderState; updated?: string; configured?: boolean };
 type EndpointFilter = "all" | "up" | "down" | "unchecked";
 type EndpointSort = "name" | "status" | "latency";
-
-const chartData = Array.from({ length: 24 }, (_, i) => ({
-  time: `${String(i).padStart(2, "0")}:00`,
-  latency: 38 + Math.round(Math.sin(i * 0.7) * 9 + Math.cos(i * 0.31) * 7 + (i % 5) * 2),
-}));
 
 function stateFromIndicator(indicator: string): ProviderState {
   if (indicator === "none") return "Operational";
@@ -54,6 +49,7 @@ function App() {
   const [cloudflare, setCloudflare] = useState<CloudflareStatus | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [endpoints, setEndpoints] = useState<MonitoredEndpoint[]>([]);
+  const [checkHistory, setCheckHistory] = useState<Record<number, CheckResult[]>>({});
   const [events, setEvents] = useState<MonitoringEvent[]>([]);
   const [apiState, setApiState] = useState<ConnectionState>("Loading");
   const [databaseState, setDatabaseState] = useState<ConnectionState>("Loading");
@@ -76,6 +72,7 @@ function App() {
   const [historyId, setHistoryId] = useState<number | null>(null);
   const [history, setHistory] = useState<CheckResult[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [chartRange, setChartRange] = useState<1 | 6 | 24>(24);
   const refreshingRef = useRef(false);
 
   async function refreshData() {
@@ -98,8 +95,16 @@ function App() {
       const [overviewResult, endpointsResult, eventsResult, cloudflareResult, configurationResult] = results;
       if (overviewResult.status === "fulfilled") setOverview(overviewResult.value);
       else failed = true;
-      if (endpointsResult.status === "fulfilled") setEndpoints(endpointsResult.value);
-      else failed = true;
+      if (endpointsResult.status === "fulfilled") {
+        setEndpoints(endpointsResult.value);
+        const historyResults = await Promise.allSettled(endpointsResult.value.map((endpoint) => api.history(endpoint.id, 500)));
+        const loadedHistory: Record<number, CheckResult[]> = {};
+        historyResults.forEach((result, index) => {
+          if (result.status === "fulfilled") loadedHistory[endpointsResult.value[index].id] = result.value;
+          else failed = true;
+        });
+        setCheckHistory(loadedHistory);
+      } else failed = true;
       if (eventsResult.status === "fulfilled") setEvents(eventsResult.value);
       else failed = true;
       if (cloudflareResult.status === "fulfilled") {
@@ -254,6 +259,19 @@ function App() {
       }
       return a.name.localeCompare(b.name);
     }), [endpoints, endpointSearch, endpointFilter, endpointSort]);
+  const chartSeries = useMemo(() => {
+    const earliest = Date.now() - chartRange * 60 * 60 * 1000;
+    return endpoints.map((endpoint) => ({
+      endpoint,
+      checks: (checkHistory[endpoint.id] ?? [])
+        .flatMap((check) => {
+          const timestamp = new Date(check.checked_at).getTime();
+          if (timestamp < earliest || check.elapsed_ms === null) return [];
+          return [{ timestamp, elapsed_ms: check.elapsed_ms }];
+        }),
+    })).filter((series) => series.checks.length > 0);
+  }, [endpoints, checkHistory, chartRange]);
+  const chartCheckCount = chartSeries.reduce((total, series) => total + series.checks.length, 0);
   const operationalProviders = providers.filter((provider) => provider.state === "Operational").length;
 
   function navigateTo(label: string, targetId: string) {
@@ -395,10 +413,10 @@ function App() {
 
         <section className="lower-grid">
           <article className="panel chart-panel" id="telemetry">
-            <div className="panel-header"><div><div className="panel-kicker">PERFORMANCE TELEMETRY</div><h2>Request latency</h2></div><span className="demo-badge">DEMO DATA</span></div>
-            <div className="chart-summary"><strong>Illustrative series</strong><span><i/>Not connected to a real request source</span></div>
-            <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}><defs><linearGradient id="latencyFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#36e99b" stopOpacity={0.22}/><stop offset="95%" stopColor="#36e99b" stopOpacity={0}/></linearGradient></defs><CartesianGrid stroke="#1c2923" strokeDasharray="3 5" vertical={false}/><XAxis dataKey="time" tick={{ fill: "#64746b", fontSize: 10 }} axisLine={false} tickLine={false} interval={5}/><YAxis tick={{ fill: "#64746b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}ms`}/><Tooltip contentStyle={{ background: "#0c1510", border: "1px solid #26392e", borderRadius: 8, color: "#e2f5e9", fontSize: 12 }} labelStyle={{ color: "#8ba696" }} formatter={(value) => [`${value} ms`, "Illustrative latency"]}/><Area type="monotone" dataKey="latency" stroke="#3be99a" strokeWidth={2} fill="url(#latencyFill)" activeDot={{ r: 4, fill: "#3be99a", stroke: "#07100b", strokeWidth: 2 }}/></AreaChart></ResponsiveContainer></div>
-            <div className="chart-footer"><span><i className="legend-green"/>Latency (illustrative)</span><span>24-hour shape · synthetic</span></div>
+            <div className="panel-header chart-header"><div><div className="panel-kicker">PERFORMANCE TELEMETRY</div><h2>Endpoint response time</h2></div><div className="chart-ranges" role="group" aria-label="Chart time range">{([1, 6, 24] as const).map((hours) => <Button key={hours} className={`chart-range ${chartRange === hours ? "selected" : ""}`} aria-pressed={chartRange === hours} onClick={() => setChartRange(hours)}>{hours}h</Button>)}</div></div>
+            <div className="chart-summary"><strong>Measured HTTP check duration</strong><span>{chartCheckCount} persisted sample{chartCheckCount === 1 ? "" : "s"} · {chartSeries.length} endpoint{chartSeries.length === 1 ? "" : "s"}</span></div>
+            {chartCheckCount === 0 ? <EmptyState title="No response-time data for this range">Run endpoint checks to chart measured response time.</EmptyState> : <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><ScatterChart margin={{ top: 8, right: 12, left: -16, bottom: 0 }}><CartesianGrid stroke="#1c2923" strokeDasharray="3 5" vertical={false}/><XAxis type="number" dataKey="timestamp" domain={["dataMin", "dataMax"]} tick={{ fill: "#64746b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}/><YAxis type="number" dataKey="elapsed_ms" name="Response time" unit=" ms" tick={{ fill: "#64746b", fontSize: 10 }} axisLine={false} tickLine={false}/><Tooltip contentStyle={{ background: "#0c1510", border: "1px solid #26392e", borderRadius: 8, color: "#e2f5e9", fontSize: 12 }} labelStyle={{ color: "#8ba696" }} labelFormatter={(value) => new Date(Number(value)).toLocaleString()} formatter={(value) => [`${Number(value).toFixed(1)} ms`, "HTTP check duration"]}/><Legend wrapperStyle={{ color: "#8da195", fontSize: 10 }}/>{chartSeries.map((series, index) => <Scatter key={series.endpoint.id} name={series.endpoint.name} data={series.checks} fill={["#45eda0", "#70a7ff", "#e6b86a", "#d78cf0"][index % 4]} />)}</ScatterChart></ResponsiveContainer></div>}
+            <div className="chart-footer"><span><i className="legend-green"/>Measured check duration</span><span>Persisted backend results · milliseconds</span></div>
           </article>
           <article className={`panel events-panel ${showEvents ? "" : "events-collapsed"}`} id="events">
             <div className="panel-header"><div><div className="panel-kicker">OBSERVABILITY LOG</div><h2>Event stream <span className="event-count">{events.length}</span></h2></div><button className="icon-button small" aria-label="Search events" onClick={() => document.getElementById("event-search")?.focus()}><Search size={14}/></button></div>
