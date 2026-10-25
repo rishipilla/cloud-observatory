@@ -69,8 +69,9 @@ src/
   App.tsx                 Dashboard layout and interactions
   api.ts                  Typed frontend API client, timeouts, Cloudflare parsing
   components/ui.tsx       Reusable Button, Card, Badge, loading, and empty states
+  components/ResponseTimeChart.tsx  Lazy-loaded chart for persisted endpoint checks
   preferences.ts          Validated browser-persisted preferences
-  styles.css              Dashboard theme and responsive layout
+  styles.css              Dashboard design tokens and responsive layout
   *.test.ts(x)            API, component, and dashboard interaction tests
 backend/
   app/main.py             FastAPI app, CORS, normalized errors
