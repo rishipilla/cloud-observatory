@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -94,6 +94,42 @@ describe("dashboard interactions", () => {
 
     expect(await screen.findAllByText("Monitoring API disconnected")).toHaveLength(2);
     expect(screen.getByText("Endpoint data cannot be loaded until the backend reconnects.")).toBeInTheDocument();
+  });
+
+  it("shows endpoint counts and response time from real check data", async () => {
+    vi.mocked(api.overview).mockResolvedValue({
+      endpoints_total: 3,
+      endpoints_healthy: 1,
+      endpoints_failing: 2,
+      active_incidents: 7,
+      last_checked_at: "2026-10-23T19:00:00Z",
+    });
+    vi.mocked(api.endpoints).mockResolvedValue([
+      { id: 1, name: "Fast API", url: "https://fast.example", interval_seconds: 60, enabled: true, created_at: "2026-10-23T19:00:00Z", updated_at: "2026-10-23T19:00:00Z", last_check: { id: 1, endpoint_id: 1, status_code: 200, elapsed_ms: 10, success: true, error: null, checked_at: "2026-10-23T19:00:00Z" } },
+      { id: 2, name: "Slow API", url: "https://slow.example", interval_seconds: 60, enabled: true, created_at: "2026-10-23T19:00:00Z", updated_at: "2026-10-23T19:00:00Z", last_check: { id: 2, endpoint_id: 2, status_code: 503, elapsed_ms: 30, success: false, error: "HTTP 503", checked_at: "2026-10-23T19:00:00Z" } },
+      { id: 3, name: "Unchecked API", url: "https://unchecked.example", interval_seconds: 60, enabled: true, created_at: "2026-10-23T19:00:00Z", updated_at: "2026-10-23T19:00:00Z", last_check: null },
+    ]);
+    render(<App />);
+
+    const summary = screen.getByRole("region", { name: "Endpoint summary" });
+    expect(await within(summary).findByText("3")).toBeInTheDocument();
+    expect(within(summary).getByText("1")).toBeInTheDocument();
+    expect(within(summary).getByText("2")).toBeInTheDocument();
+    expect(within(summary).getByText("20")).toBeInTheDocument();
+    expect(within(summary).queryByText("7")).not.toBeInTheDocument();
+  });
+
+  it("keeps mobile navigation limited to working sections", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("No endpoints configured");
+    await user.click(screen.getByRole("button", { name: "Hide activity" }));
+    await user.click(screen.getByRole("button", { name: "Activity" }));
+
+    expect(screen.getByRole("textbox", { name: "Filter activity" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("button", { name: "Global topology" })).not.toBeInTheDocument();
   });
 
   it("filters endpoints by text and health status", async () => {

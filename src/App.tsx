@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
-  Activity, Bell, Check, CircleHelp, Cloud, Cpu, ExternalLink,
-  Globe2, Layers3, Network, RefreshCw, Search, Server, Settings2, ShieldCheck, Signal,
-  Terminal, Wifi, X
+  Activity, AlertCircle, Check, CheckCircle2, CircleHelp, Cloud, ExternalLink,
+  RefreshCw, Search, Server, Settings2, Signal, Timer, X,
 } from "lucide-react";
-import {
-  CartesianGrid, Legend, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis
-} from "recharts";
 import { api, type CheckResult, type CloudflareStatus, type MonitoredEndpoint, type MonitoringEvent, type Overview } from "./api";
 import { Badge, Button, Card, EmptyState, LoadingState } from "./components/ui";
 import { loadPreferences, savePreferences, type RefreshInterval, type ThemePreference } from "./preferences";
+
+const ResponseTimeChart = lazy(() =>
+  import("./components/ResponseTimeChart").then(({ ResponseTimeChart: Chart }) => ({ default: Chart })),
+);
 
 type ProviderState = "Operational" | "Degraded" | "Unavailable" | "Loading";
 type ConnectionState = "Loading" | "Connected" | "Disconnected";
@@ -18,19 +18,17 @@ type Provider = { name: string; description: string; state: ProviderState; updat
 type EndpointFilter = "all" | "up" | "down" | "unchecked";
 type EndpointSort = "name" | "status" | "latency";
 
+const navigationItems = [
+  { label: "Overview", target: "overview", icon: Activity },
+  { label: "Endpoints", target: "endpoints", icon: Server },
+  { label: "Activity", target: "events", icon: Signal },
+  { label: "Preferences", target: "preferences", icon: Settings2 },
+];
+
 function stateFromIndicator(indicator: string): ProviderState {
   if (indicator === "none") return "Operational";
   if (indicator === "minor" || indicator === "major" || indicator === "critical") return "Degraded";
   return "Unavailable";
-}
-
-function Clock() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return <span>{now.toLocaleTimeString([], { hour12: false })}</span>;
 }
 
 function StatusPill({ state }: { state: ProviderState }) {
@@ -284,7 +282,8 @@ function App() {
   const chartSeries = useMemo(() => {
     const earliest = Date.now() - chartRange * 60 * 60 * 1000;
     return endpoints.map((endpoint) => ({
-      endpoint,
+      id: endpoint.id,
+      name: endpoint.name,
       checks: (checkHistory[endpoint.id] ?? [])
         .flatMap((check) => {
           const timestamp = new Date(check.checked_at).getTime();
@@ -294,11 +293,20 @@ function App() {
     })).filter((series) => series.checks.length > 0);
   }, [endpoints, checkHistory, chartRange]);
   const chartCheckCount = chartSeries.reduce((total, series) => total + series.checks.length, 0);
-  const operationalProviders = providers.filter((provider) => provider.state === "Operational").length;
+  const measuredResponses = endpoints.flatMap((endpoint) => {
+    const elapsed = endpoint.last_check?.elapsed_ms;
+    return elapsed === null || elapsed === undefined ? [] : [elapsed];
+  });
+  const averageResponseTime = measuredResponses.length
+    ? measuredResponses.reduce((total, elapsed) => total + elapsed, 0) / measuredResponses.length
+    : null;
 
   function scrollTo(target: Element | null) {
     if (target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      target.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "start",
+      });
     }
   }
 
@@ -319,88 +327,106 @@ function App() {
   function navigateTo(label: string, targetId: string) {
     setActiveNav(label);
     setNotice("");
+    if (targetId === "events") setShowEvents(true);
     scrollTo(document.getElementById(targetId));
   }
 
   return (
     <div className="app-shell" data-theme={theme}>
-      <div className="ambient ambient-one" /><div className="ambient ambient-two" />
-      <aside className="sidebar">
+      <aside className="sidebar" aria-label="Application sidebar">
         <div className="brand">
-          <div className="brand-mark"><Cloud size={21} strokeWidth={1.8} /></div>
-          <div><strong>cloud<span>observatory</span></strong><small>INFRASTRUCTURE INTELLIGENCE</small></div>
+          <div className="brand-mark" aria-hidden="true"><Cloud size={20} strokeWidth={1.8} /></div>
+          <div><strong>Cloud <span>Observatory</span></strong><small>SERVICE MONITORING</small></div>
         </div>
-        <div className="workspace"><span className="workspace-icon"><Layers3 size={15}/></span><div><small>WORKSPACE</small><strong>Personal Cloud</strong></div></div>
-        <div className="nav-label">MONITORING</div>
-        <nav>
-          {[
-            { label: "Overview", icon: Activity },
-            { label: "Global topology", icon: Globe2 },
-            { label: "Service health", icon: ShieldCheck },
-            { label: "Network", icon: Network },
-            { label: "Infrastructure", icon: Server },
-            { label: "Event stream", icon: Terminal },
-          ].map(({ label, icon: Icon }) => (
-            <button key={label} className={`nav-item ${activeNav === label ? "active" : ""}`} onClick={() => navigateTo(label, ({
-              Overview: "overview",
-              "Global topology": "topology",
-              "Service health": "endpoints",
-              Network: "topology",
-              Infrastructure: "telemetry",
-              "Event stream": "events",
-            } as Record<string, string>)[label])}>
-              <Icon size={17}/><span>{label}</span>{label === "Event stream" && <span className="nav-count">{events.length}</span>}
+        <nav className="primary-nav" aria-label="Primary navigation">
+          <span className="nav-label">WORKSPACE</span>
+          {navigationItems.map(({ label, target, icon: Icon }) => (
+            <button
+              type="button"
+              key={label}
+              className={`nav-item ${activeNav === label ? "active" : ""}`}
+              aria-label={label}
+              aria-current={activeNav === label ? "page" : undefined}
+              onClick={() => navigateTo(label, target)}
+            >
+              <Icon size={17} aria-hidden="true" />
+              <span>{label}</span>
+              {label === "Activity" && <span className="nav-count">{events.length}</span>}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="connection-card"><span className={`connection-dot ${databaseState.toLowerCase()}`}/><div><strong>Database status</strong><small>{databaseState === "Connected" ? "Ready · persistent storage" : databaseState === "Loading" ? "Checking readiness" : "Disconnected"}</small></div></div>
-          <button className="nav-item" onClick={() => navigateTo("Help & settings", "preferences")}><CircleHelp size={17}/><span>Help & settings</span></button>
-          <div className="profile"><div className="avatar">CO</div><div><strong>Cloud Operator</strong><small>Local environment</small></div></div>
+          <div className="connection-card">
+            <span className={`connection-dot ${apiState.toLowerCase()}`} aria-hidden="true" />
+            <div><strong>Monitoring API</strong><small>{apiState === "Connected" ? "Connected" : apiState === "Loading" ? "Checking connection" : "Disconnected"}</small></div>
+          </div>
+          <div className="database-status">
+            <span className={`connection-dot ${databaseState.toLowerCase()}`} aria-hidden="true" />
+            <span>Database {databaseState === "Connected" ? "ready" : databaseState === "Loading" ? "checking" : "unavailable"}</span>
+          </div>
         </div>
       </aside>
 
       <main className="main-content">
         <header className="topbar">
-          <div className="breadcrumb"><span>Observability</span><span className="slash">/</span><strong>{activeNav}</strong></div>
+          <div className="breadcrumb"><span>Cloud Observatory</span><span className="slash">/</span><strong>{activeNav}</strong></div>
           <div className="top-actions">
-            <div className="live-clock"><span className="pulse-dot"/><Clock/><span className="timezone">LOCAL</span></div>
-            <button className="icon-button" aria-label="Notifications" onClick={() => { if (overview?.active_incidents) { setEventSearch("failure"); navigateTo("Event stream", "events"); } else { setNotice("No active endpoint incidents."); } }}><Bell size={17}/>{Boolean(overview?.active_incidents) && <i/>}</button>
-            <button className="icon-button" aria-label="Dashboard preferences" onClick={() => navigateTo("Help & settings", "preferences")}><Settings2 size={17}/></button>
-            <div className="top-avatar">R</div>
+            <span className={`api-status ${apiState.toLowerCase()}`}><i aria-hidden="true" />{apiState === "Connected" ? "API connected" : apiState === "Loading" ? "Connecting" : "API disconnected"}</span>
+            <Button className="icon-button" aria-label="Dashboard preferences" onClick={() => navigateTo("Preferences", "preferences")}><Settings2 size={17}/></Button>
+            <Button className="button-primary" aria-label="Refresh data" onClick={() => void refreshData()} disabled={loading} aria-busy={loading}>
+              <RefreshCw size={15} className={loading ? "spin" : ""} aria-hidden="true" />{loading ? "Refreshing" : "Refresh"}
+            </Button>
           </div>
         </header>
 
         <section className="page-heading" id="overview">
-          <div><div className="eyebrow"><span className="eyebrow-line"/> CLOUD CONTROL PLANE <span className="eyebrow-tag">PREVIEW 0.1</span></div>
-            <h1>System <span>overview.</span></h1>
-            <p>One view into your cloud. Track service health, observe changes, and investigate anomalies.</p>
+          <div>
+            <div className="eyebrow"><span className="eyebrow-line" />MONITORING OVERVIEW</div>
+            <h1>Service health</h1>
+            <p>Monitor endpoint checks, provider status, and recent service events.</p>
           </div>
           <div className="heading-actions">
-            <Button className="button-secondary" onClick={() => setShowEvents(!showEvents)}><Activity size={15}/>{showEvents ? "Hide activity" : "Show activity"}</Button>
-            <Button className="button-primary" onClick={() => void refreshData()} disabled={loading} aria-busy={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/>{loading ? "Refreshing" : "Refresh data"}</Button>
+            <Button className="button-secondary" onClick={() => setShowEvents(!showEvents)} aria-expanded={showEvents} aria-controls="events">
+              <Activity size={15} aria-hidden="true" />{showEvents ? "Hide activity" : "Show activity"}
+            </Button>
           </div>
         </section>
-        {notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="Dismiss"><X size={15}/></button></div>}
+        {notice && <div className="notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice("")} aria-label="Dismiss"><X size={15}/></button></div>}
 
         <div className={`data-banner ${apiState === "Disconnected" ? "banner-error" : stale ? "banner-stale" : ""}`}>
-          <span className="banner-icon"><Signal size={15}/></span>
+          <span className="banner-icon"><Signal size={15} aria-hidden="true" /></span>
           <div><strong>{apiState === "Loading" ? "Connecting to monitoring API" : apiState === "Disconnected" ? "Monitoring API disconnected" : stale ? "Showing stale or partial data" : "Live monitoring data"}</strong>
-            <span>{apiState === "Disconnected" ? "Start the FastAPI backend and verify VITE_API_BASE_URL. Previously loaded results are retained." : "Endpoint checks, events, and Cloudflare public status are loaded from the backend. CPU, memory, and throughput have no connected source."}</span>
+            <span>{apiState === "Disconnected" ? "Start the FastAPI backend and verify VITE_API_BASE_URL. Previously loaded results are retained." : "Endpoint checks, events, and public provider status are loaded from the backend."}</span>
           </div>
-          <span className="banner-tag">{lastUpdated ? `LAST SUCCESS ${lastUpdated.toLocaleTimeString([], { hour12: false })}` : apiState.toUpperCase()}</span>
+          <span className="banner-tag">{lastUpdated ? `UPDATED ${lastUpdated.toLocaleTimeString([], { hour12: false })}` : apiState.toUpperCase()}</span>
         </div>
         {refreshError && <div className="refresh-error" role="status"><span>{refreshError}</span><span>{lastAttempt ? `Last attempt ${lastAttempt.toLocaleTimeString([], { hour12: false })}` : ""}</span></div>}
 
-        <section className="metric-grid">
-          <Card className="metric-card"><div className="metric-top"><span>MONITORED ENDPOINTS UP</span><ShieldCheck size={17}/></div><div className="metric-value">{overview ? overview.endpoints_healthy : "—"}<span className="metric-total"> / {overview?.endpoints_total ?? "—"}</span></div><div className="metric-foot"><span className="foot-neutral"><Activity size={13}/>Persisted health checks</span><span className="metric-side">LIVE</span></div><div className="metric-bar"><i style={{ width: `${overview?.endpoints_total ? overview.endpoints_healthy / overview.endpoints_total * 100 : 0}%` }}/></div></Card>
-          <Card className="metric-card"><div className="metric-top"><span>HOST CPU UTILIZATION</span><Cpu size={17}/></div><div className="metric-value muted-value">—<span className="metric-unit"> %</span></div><div className="metric-foot"><span className="foot-amber">Agent not connected</span><span className="metric-side">NO DATA</span></div><div className="mini-empty"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></Card>
-          <Card className="metric-card"><div className="metric-top"><span>NETWORK THROUGHPUT</span><Wifi size={17}/></div><div className="metric-value muted-value">—<span className="metric-unit"> Mbps</span></div><div className="metric-foot"><span className="foot-amber">Exporter required</span><span className="metric-side">NO DATA</span></div><div className="mini-empty"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></Card>
-          <Card className="metric-card"><div className="metric-top"><span>FAILING ENDPOINTS</span><Bell size={17}/></div><div className="metric-value">{overview ? overview.active_incidents : "—"}</div><div className="metric-foot"><span className="foot-neutral">From latest persisted checks</span><span className="metric-side">LIVE</span></div><div className="incident-track"><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/><span/></div></Card>
+        <section className="metric-grid" aria-label="Endpoint summary">
+          <Card className="metric-card">
+            <div className="metric-top"><span>MONITORED ENDPOINTS</span><Server size={17} aria-hidden="true" /></div>
+            <div className="metric-value">{overview?.endpoints_total ?? "—"}</div>
+            <div className="metric-foot"><span>Configured endpoints</span></div>
+          </Card>
+          <Card className="metric-card">
+            <div className="metric-top"><span>HEALTHY</span><CheckCircle2 size={17} aria-hidden="true" /></div>
+            <div className="metric-value metric-positive">{overview?.endpoints_healthy ?? "—"}</div>
+            <div className="metric-foot"><span>Passing latest check</span></div>
+          </Card>
+          <Card className="metric-card">
+            <div className="metric-top"><span>FAILING</span><AlertCircle size={17} aria-hidden="true" /></div>
+            <div className={`metric-value ${overview?.endpoints_failing ? "metric-negative" : ""}`}>{overview?.endpoints_failing ?? "—"}</div>
+            <div className="metric-foot"><span>Failing latest check</span></div>
+          </Card>
+          <Card className="metric-card">
+            <div className="metric-top"><span>AVG. RESPONSE TIME</span><Timer size={17} aria-hidden="true" /></div>
+            <div className="metric-value">{averageResponseTime === null ? "—" : averageResponseTime.toFixed(0)}<span className="metric-unit">{averageResponseTime === null ? "" : " ms"}</span></div>
+            <div className="metric-foot"><span>{measuredResponses.length ? `From ${measuredResponses.length} latest check${measuredResponses.length === 1 ? "" : "s"}` : "No check results yet"}</span></div>
+          </Card>
         </section>
 
         <section className="endpoint-section panel" id="endpoints">
-          <div className="panel-header"><div><div className="panel-kicker">REAL HTTP MONITORING</div><h2>Monitored endpoints</h2></div><span className="event-count">{endpoints.length}</span></div>
+          <div className="panel-header"><div><div className="panel-kicker">HTTP MONITORING</div><h2>Monitored endpoints</h2></div><span className="event-count" aria-label={`${endpoints.length} endpoints`}>{endpoints.length}</span></div>
           {endpoints.length > 0 && <div className="endpoint-toolbar">
             <label className="endpoint-search"><Search size={14}/><input aria-label="Search monitored endpoints" placeholder="Search services or URLs" value={endpointSearch} onChange={(event) => setEndpointSearch(event.target.value)}/></label>
             <label className="endpoint-select-label">Status<select aria-label="Filter endpoints by status" className="endpoint-select" value={endpointFilter} onChange={(event) => setEndpointFilter(event.target.value as EndpointFilter)}>
@@ -411,12 +437,12 @@ function App() {
             </select></label>
           </div>}
           {apiState === "Disconnected" ? <EmptyState title="Monitoring API disconnected">Endpoint data cannot be loaded until the backend reconnects.</EmptyState> : endpoints.length === 0 ? loading ? <LoadingState label="Loading configured endpoints…" /> : <EmptyState title="No endpoints configured">Add a public HTTP or HTTPS URL to begin monitoring.</EmptyState> : visibleEndpoints.length === 0 ? <EmptyState title="No matching endpoints">Adjust the search or status filter to see monitored services.</EmptyState> : (
-            <div className="endpoint-list">{visibleEndpoints.map((endpoint) => <div className="endpoint-item" key={endpoint.id}>
-              <div className="endpoint-details"><strong>{endpoint.name}</strong><a href={endpoint.url} target="_blank" rel="noreferrer">{endpoint.url}<ExternalLink size={11}/></a></div>
+            <div className="endpoint-list" role="list">{visibleEndpoints.map((endpoint) => <article className="endpoint-item" key={endpoint.id} role="listitem">
+              <div className="endpoint-details"><strong>{endpoint.name}</strong><a href={endpoint.url} target="_blank" rel="noreferrer">{endpoint.url}<ExternalLink size={11} aria-hidden="true" /></a></div>
               <div className="endpoint-result">{endpoint.last_check ? <><StatusPill state={endpoint.last_check.success ? "Operational" : "Degraded"}/><small>{endpoint.last_check.status_code ? `HTTP ${endpoint.last_check.status_code}` : endpoint.last_check.error} · {endpoint.last_check.elapsed_ms == null ? "—" : `${endpoint.last_check.elapsed_ms.toFixed(0)} ms`} · {formatTime(endpoint.last_check.checked_at)}</small></> : <small>No check has run</small>}</div>
-              <div className="endpoint-actions"><Button className="text-button" disabled={checkingId === endpoint.id} onClick={() => void runCheck(endpoint.id)}>{checkingId === endpoint.id ? "Checking…" : "Check now"}</Button><Button className="text-button" onClick={() => void toggleHistory(endpoint.id)}>{historyId === endpoint.id ? "Hide history" : "History"}</Button><Button className="text-button" onClick={() => editEndpoint(endpoint)}>Edit</Button><Button className="text-button danger-button" onClick={() => void removeEndpoint(endpoint.id)}>Remove</Button></div>
-              {historyId === endpoint.id && <div className="history-list">{historyLoading ? <LoadingState label="Loading history…" /> : history.length ? history.map((check) => <div key={check.id}><span>{check.success ? "UP" : "DOWN"}</span><span>{check.status_code || check.error}</span><span>{check.elapsed_ms == null ? "—" : `${check.elapsed_ms.toFixed(0)} ms`}</span><time>{formatTime(check.checked_at)}</time></div>) : <EmptyState title="No check history yet">Run a check to collect the first result.</EmptyState>}</div>}
-            </div>)}</div>
+              <div className="endpoint-actions"><Button className="text-button" disabled={checkingId === endpoint.id} aria-busy={checkingId === endpoint.id} onClick={() => void runCheck(endpoint.id)}>{checkingId === endpoint.id ? "Checking…" : "Check now"}</Button><Button className="text-button" aria-expanded={historyId === endpoint.id} onClick={() => void toggleHistory(endpoint.id)}>{historyId === endpoint.id ? "Hide history" : "History"}</Button><Button className="text-button" onClick={() => editEndpoint(endpoint)}>Edit</Button><Button className="text-button danger-button" onClick={() => void removeEndpoint(endpoint.id)}>Remove</Button></div>
+              {historyId === endpoint.id && <div className="history-list" aria-label={`Check history for ${endpoint.name}`}>{historyLoading ? <LoadingState label="Loading history…" /> : history.length ? history.map((check) => <div key={check.id}><span>{check.success ? "UP" : "DOWN"}</span><span>{check.status_code || check.error}</span><span>{check.elapsed_ms == null ? "—" : `${check.elapsed_ms.toFixed(0)} ms`}</span><time>{formatTime(check.checked_at)}</time></div>) : <EmptyState title="No check history yet">Run a check to collect the first result.</EmptyState>}</div>}
+            </article>)}</div>
           )}
           <form className="endpoint-form" onSubmit={(event) => void createEndpoint(event)}>
             <input id="endpoint-name" aria-label="Endpoint name" placeholder="Endpoint name" value={endpointName} onChange={(event) => setEndpointName(event.target.value)} required maxLength={120}/>
@@ -428,45 +454,26 @@ function App() {
         </section>
 
         <section className="content-grid">
-          <article className="panel topology-panel" id="topology">
-            <div className="panel-header"><div><div className="panel-kicker">NETWORK VISUALIZATION</div><h2>Global service topology</h2></div><Button className="subtle-select" onClick={() => navigateTo("Service health", "endpoints")}>View endpoints</Button></div>
-            <div className="topology">
-              <div className="topology-grid"/>
-              <svg className="topology-lines" viewBox="0 0 720 310" preserveAspectRatio="none" aria-hidden="true">
-                <defs><linearGradient id="lineGlow"><stop offset="0%" stopColor="#3cf2a0" stopOpacity=".05"/><stop offset="50%" stopColor="#3cf2a0" stopOpacity=".8"/><stop offset="100%" stopColor="#3cf2a0" stopOpacity=".08"/></linearGradient></defs>
-                <path d="M360 150 Q270 70 150 105"/><path d="M360 150 Q460 70 570 100"/><path d="M360 150 Q260 210 175 235"/><path d="M360 150 Q475 210 555 230"/><path d="M150 105 Q155 170 175 235"/><path d="M570 100 Q575 170 555 230"/><path d="M150 105 Q360 10 570 100"/>
-                {[["150","105"],["570","100"],["175","235"],["555","230"]].map(([cx,cy],i)=><circle key={i} cx={cx} cy={cy} r="3" fill="#4df2a5"><animate attributeName="opacity" values=".3;1;.3" dur={`${2+i*.4}s`} repeatCount="indefinite"/></circle>)}
-              </svg>
-              <div className="topo-node core-node"><div className="node-rings"><span/><span/><span/></div><div className="node-center"><Cloud size={24}/></div><div className="node-label"><strong>Cloud edge</strong><small>Public status endpoints</small></div></div>
-              <div className="topo-node node-na"><div className="node-dot"><Globe2 size={15}/></div><div className="node-label"><strong>North America</strong><small>External status source</small></div></div>
-              <div className="topo-node node-eu"><div className="node-dot"><Globe2 size={15}/></div><div className="node-label"><strong>Europe</strong><small>Not instrumented</small></div></div>
-              <div className="topo-node node-ap"><div className="node-dot"><Globe2 size={15}/></div><div className="node-label"><strong>Asia Pacific</strong><small>Not instrumented</small></div></div>
-              <div className="topo-node node-sa"><div className="node-dot"><Globe2 size={15}/></div><div className="node-label"><strong>South America</strong><small>Not instrumented</small></div></div>
-              <div className="topology-caption"><span className="pulse-dot"/>Animated illustration <span className="caption-divider"/> No live route telemetry</div>
-            </div>
-            <div className="topology-legend"><span><i className="legend-green"/>Connected data source</span><span><i className="legend-grey"/>Not instrumented</span><span className="legend-right">Topology is illustrative</span></div>
-          </article>
-
           <article className="panel provider-panel">
-            <div className="panel-header"><div><div className="panel-kicker">UPSTREAM SERVICES</div><h2>Provider health</h2></div><Button className="icon-button small" onClick={() => void refreshData()} aria-label="Refresh provider health"><RefreshCw size={14}/></Button></div>
-            <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><div className={`provider-logo ${provider.name.toLowerCase().replace(" ", "-")}`}>{provider.name === "AWS" ? <span className="aws-mark">aws</span> : provider.name === "Google Cloud" ? <span className="google-mark">G</span> : <Cloud size={17}/>}</div><div className="provider-info"><strong>{provider.name}</strong><small>{provider.description}</small></div><StatusPill state={provider.state}/></div>)}</div>
+            <div className="panel-header"><div><div className="panel-kicker">UPSTREAM STATUS</div><h2>Provider health</h2></div></div>
+            <div className="provider-list">{providers.map((provider) => <div className="provider-row" key={provider.name}><div className={`provider-logo ${provider.name.toLowerCase().replace(" ", "-")}`} aria-hidden="true">{provider.name === "AWS" ? <span className="aws-mark">AWS</span> : provider.name === "Google Cloud" ? <span className="google-mark">G</span> : <Cloud size={17}/>}</div><div className="provider-info"><strong>{provider.name}</strong><small>{provider.description}</small></div><StatusPill state={provider.state}/></div>)}</div>
             {cloudflare?.incidents.length ? <div className="provider-extra">Active Cloudflare incidents: {cloudflare.incidents.map((incident) => incident.name).join(", ")}</div> : null}
             <div className="provider-footer"><span>{lastUpdated ? `Checked ${lastUpdated.toLocaleTimeString([], { hour12: false })}` : "Waiting for first check"}</span><a href="https://www.cloudflarestatus.com/" target="_blank" rel="noreferrer">Status source <ExternalLink size={12}/></a></div>
           </article>
+
+          <article className="panel chart-panel" id="response-times">
+            <div className="panel-header chart-header"><div><div className="panel-kicker">PERSISTED CHECKS</div><h2>Response time</h2></div><div className="chart-ranges" role="group" aria-label="Chart time range">{([1, 6, 24] as const).map((hours) => <Button key={hours} className={`chart-range ${chartRange === hours ? "selected" : ""}`} aria-pressed={chartRange === hours} onClick={() => setChartRange(hours)}>{hours}h</Button>)}</div></div>
+            <div className="chart-summary"><strong>Measured HTTP check duration</strong><span>{chartCheckCount} persisted sample{chartCheckCount === 1 ? "" : "s"} · {chartSeries.length} endpoint{chartSeries.length === 1 ? "" : "s"}</span></div>
+            {chartCheckCount === 0 ? <EmptyState title="No response-time data for this range">Run endpoint checks to chart measured response time.</EmptyState> : <div className="chart-wrap"><Suspense fallback={<LoadingState label="Loading response-time chart…" />}><ResponseTimeChart series={chartSeries} /></Suspense></div>}
+            <div className="chart-footer"><span>Measured check duration</span><span>Milliseconds · backend results</span></div>
+          </article>
         </section>
 
-        <section className="lower-grid">
-          <article className="panel chart-panel" id="telemetry">
-            <div className="panel-header chart-header"><div><div className="panel-kicker">PERFORMANCE TELEMETRY</div><h2>Endpoint response time</h2></div><div className="chart-ranges" role="group" aria-label="Chart time range">{([1, 6, 24] as const).map((hours) => <Button key={hours} className={`chart-range ${chartRange === hours ? "selected" : ""}`} aria-pressed={chartRange === hours} onClick={() => setChartRange(hours)}>{hours}h</Button>)}</div></div>
-            <div className="chart-summary"><strong>Measured HTTP check duration</strong><span>{chartCheckCount} persisted sample{chartCheckCount === 1 ? "" : "s"} · {chartSeries.length} endpoint{chartSeries.length === 1 ? "" : "s"}</span></div>
-            {chartCheckCount === 0 ? <EmptyState title="No response-time data for this range">Run endpoint checks to chart measured response time.</EmptyState> : <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><ScatterChart margin={{ top: 8, right: 12, left: -16, bottom: 0 }}><CartesianGrid stroke="#1c2923" strokeDasharray="3 5" vertical={false}/><XAxis type="number" dataKey="timestamp" domain={["dataMin", "dataMax"]} tick={{ fill: "#64746b", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}/><YAxis type="number" dataKey="elapsed_ms" name="Response time" unit=" ms" tick={{ fill: "#64746b", fontSize: 10 }} axisLine={false} tickLine={false}/><Tooltip contentStyle={{ background: "#0c1510", border: "1px solid #26392e", borderRadius: 8, color: "#e2f5e9", fontSize: 12 }} labelStyle={{ color: "#8ba696" }} labelFormatter={(value) => new Date(Number(value)).toLocaleString()} formatter={(value) => [`${Number(value).toFixed(1)} ms`, "HTTP check duration"]}/><Legend wrapperStyle={{ color: "#8da195", fontSize: 10 }}/>{chartSeries.map((series, index) => <Scatter key={series.endpoint.id} name={series.endpoint.name} data={series.checks} fill={["#45eda0", "#70a7ff", "#e6b86a", "#d78cf0"][index % 4]} />)}</ScatterChart></ResponsiveContainer></div>}
-            <div className="chart-footer"><span><i className="legend-green"/>Measured check duration</span><span>Persisted backend results · milliseconds</span></div>
-          </article>
-          <article className={`panel events-panel ${showEvents ? "" : "events-collapsed"}`} id="events">
-            <div className="panel-header"><div><div className="panel-kicker">OBSERVABILITY LOG</div><h2>Event stream <span className="event-count">{events.length}</span></h2></div><Button className="icon-button small" aria-label="Search events" onClick={() => { setShowEvents(true); window.setTimeout(() => document.getElementById("event-search")?.focus(), 0); }}><Search size={14}/></Button></div>
-            {showEvents && <><div className="event-search"><Search size={14}/><input id="event-search" placeholder="Filter events..." value={eventSearch} onChange={(event) => setEventSearch(event.target.value)}/><span>API</span></div><div className="event-list">{filteredEvents.length ? filteredEvents.map((event) => <div className="event-row" key={event.id}><div className={`event-indicator ${event.type === "recovery" ? "green" : "amber"}`}>{event.type === "recovery" ? <Check size={12}/> : <CircleHelp size={12}/>}</div><div className="event-copy"><strong>{event.message}</strong><small>{event.type.replace(/_/g, " ")}</small></div><time>{new Date(event.created_at).toLocaleTimeString([], { hour12: false })}</time></div>) : <div className="empty-state">{apiState === "Disconnected" ? "Events unavailable while the API is disconnected." : events.length === 0 ? "No monitoring events yet. Events appear when checks fail or recover." : "No events match this filter."}</div>}</div><div className="events-footer"><span><span className={`connection-dot ${apiState.toLowerCase()}`}/>{apiState === "Connected" ? "Connected to monitoring API" : apiState === "Loading" ? "Connecting…" : "API disconnected"}</span><button onClick={() => setEventSearch("")}>Clear filter</button></div></>}
-          </article>
+        <section className="panel events-panel" id="events" aria-labelledby="events-title">
+          <div className="panel-header"><div><div className="panel-kicker">RECENT CHANGES</div><h2 id="events-title">Activity <span className="event-count">{events.length}</span></h2></div><Button className="icon-button" aria-label="Search events" onClick={() => { setShowEvents(true); window.setTimeout(() => document.getElementById("event-search")?.focus(), 0); }}><Search size={14}/></Button></div>
+          {showEvents && <><label className="event-search"><Search size={14} aria-hidden="true" /><input id="event-search" aria-label="Filter activity" placeholder="Filter events..." value={eventSearch} onChange={(event) => setEventSearch(event.target.value)}/><Button className="clear-filter" onClick={() => setEventSearch("")}>Clear</Button></label><div className="event-list">{filteredEvents.length ? filteredEvents.map((event) => <div className="event-row" key={event.id}><div className={`event-indicator ${event.type === "recovery" ? "green" : "amber"}`} aria-hidden="true">{event.type === "recovery" ? <Check size={12}/> : <CircleHelp size={12}/>}</div><div className="event-copy"><strong>{event.message}</strong><small>{event.type.replace(/_/g, " ")}</small></div><time>{new Date(event.created_at).toLocaleTimeString([], { hour12: false })}</time></div>) : <div className="empty-state">{apiState === "Disconnected" ? "Events unavailable while the API is disconnected." : events.length === 0 ? "No monitoring events yet. Events appear when checks fail or recover." : "No events match this filter."}</div>}</div></>}
         </section>
+
         <section className="panel preferences-panel" id="preferences">
           <div className="panel-header"><div><div className="panel-kicker">DASHBOARD</div><h2>Preferences</h2></div></div>
           <div className="preferences-controls">
@@ -479,7 +486,7 @@ function App() {
             <span>Saved in this browser only. Manual refresh remains available at any time.</span>
           </div>
         </section>
-        <footer className="footer"><span>◈ CLOUD OBSERVATORY <span className="footer-version">v0.1.0 · LOCAL PREVIEW</span></span><span><span className={`connection-dot ${apiState.toLowerCase()}`}/> {apiState === "Connected" ? `${operationalProviders} provider(s) operational` : "Monitoring API unavailable"} <span className="footer-divider"/> CPU and network telemetry unavailable</span></footer>
+        <footer className="footer"><span>Cloud Observatory <span className="footer-version">v0.1.0</span></span><span>API {apiState.toLowerCase()} · database {databaseState.toLowerCase()}</span></footer>
       </main>
     </div>
   );
